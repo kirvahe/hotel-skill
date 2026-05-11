@@ -45,7 +45,24 @@ cp workflows/*.md ~/.claude/skills/hotel/workflows/
 cp references/*.md ~/.claude/skills/hotel/references/
 ```
 
-### 2. Fill the taste profile
+### 2. Auto-updates (optional, recommended)
+
+During install, you'll be asked: **`Enable auto-updates via SessionStart hook? [Y/n]`**.
+
+If you say **Yes**, the installer adds a small SessionStart hook to `~/.claude/settings.json` that:
+
+- Runs at most once every 24 hours, async (doesn't slow Claude Code startup)
+- Maintains a hidden clone at `~/.claude/skills/hotel/.source/`
+- Fast-forward merges new commits from this repo
+- Re-runs `install.sh --non-interactive` when updates are available
+- Prints a one-line notification in chat: `✓ /hotel updated to vX.Y.Z — <release URL>`
+- Preserves your `taste-profile.md`, `booking-history.md`, and `cities/` data
+
+After enabling, you never need to think about updates again.
+
+**To disable later**: run `./install.sh --uninstall-hook` (removes the hook + sync script, leaves skill files intact).
+
+### 3. Fill the taste profile
 
 The profile is the calibration source. Edit `taste-profile.md` and fill in at minimum:
 
