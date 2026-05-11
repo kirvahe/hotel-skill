@@ -2,6 +2,7 @@
 name: hotel
 description: Find hotels matching taste profile. This skill should be used when the user asks for hotel recommendations, wants to rate a hotel stay, or asks to analyze hotel preferences. Triggers on hotel search, "where to stay", accommodation, city names with hotel context.
 argument-hint: [city budget/occasion]
+version: "1.1.1"
 ---
 
 <essential_principles>
