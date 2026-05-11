@@ -1,5 +1,21 @@
 # Changelog
 
+## [v1.1.1] — 2026-05-11
+
+Adds automatic updates via a SessionStart hook. After running `./install.sh` once with this version, future releases install themselves silently every 24 hours — no terminal commands required. Skill content is identical to v1.1.
+
+### Added
+
+- `scripts/sync-hotel-skill.sh` — async sync script with 24h throttle. Maintains a persistent clone at `~/.claude/skills/hotel/.source/`, fast-forward merges from upstream, re-runs `./install.sh --non-interactive` when new commits arrive. Emits a one-line notification in Claude Code chat when an update is applied.
+- `install.sh` `--non-interactive` flag — used by the sync script to install without prompts.
+- `install.sh` `--uninstall-hook` flag — removes the SessionStart hook and the sync script, leaves skill files untouched.
+- `install.sh` interactive prompt at end of install: `Enable auto-updates via SessionStart hook? [Y/n]` (default Yes). On Yes, the hook is added to `~/.claude/settings.json` via `jq` with a timestamped backup. On No, the JSON snippet is printed for manual addition.
+
+### Migration (from v1.1)
+
+- **Recommended**: re-run `./install.sh` and accept the auto-update prompt. From that point on, future versions install themselves on the next Claude Code session that's >24h since the last sync.
+- **Opt out later**: run `./install.sh --uninstall-hook` (removes hook + sync script, leaves skill files intact).
+
 ## [v1.1] — 2026-05-11
 
 First public release. Built on the internal v1.0 baseline; applied a 3-tier CE-upgrade transferring mature mechanisms from the `/restaurant` skill (search, persistence, visit protocol) and adding hotel-specific surfaces (occasion taxonomy, operational verification, festivo calendar, pet protocol as first-class parameter).
