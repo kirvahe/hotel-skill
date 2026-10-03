@@ -1,6 +1,6 @@
 # Roadmap — /hotel skill
 
-## v1.1 (current — first public release)
+## v1.1 (first public release)
 
 Shipped as a CE-upgrade from the internal v1.0 baseline. Mature mechanisms from the sibling `/restaurant` skill (multi-round persistence, source tier model, visit protocol) ported to the hotel domain, with hotel-specific additions (occasion taxonomy, operational verification, Spain festivo calendar, pet protocol as first-class parameter).
 
@@ -14,7 +14,16 @@ Shipped as a CE-upgrade from the internal v1.0 baseline. Mature mechanisms from 
 - Booking-rating bias adjustment heuristics
 - Pet as boolean parameter, not occasion
 
-## v1.2 (planned)
+## v1.2 (current)
+
+Structural alignment with Anthropic's skill-authoring best practices. Skill behavior is unchanged.
+
+- Table of contents at the top of every workflow and reference file
+- Data layout documents `feedback/`, `trips/` and `cities/README.md`
+- Reference and workflow indexes in SKILL.md use full relative paths and state when each file is read
+- `evals/evals.md` — five manual smoke-test scenarios on synthetic data
+
+## v1.3 (planned)
 
 Quality and onboarding improvements before considering distribution work.
 

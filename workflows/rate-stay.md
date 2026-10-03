@@ -1,5 +1,13 @@
 # Workflow: Record a Stay — Phase 1 (confirmation) or Phase 2 (review)
 
+## Contents
+- Required reading (load before recording)
+- Phase detection (pick one phase before doing anything else)
+- Phase 1 — Booking confirmation: 1.1 read the artifact, 1.2 provisional booking-history entry, 1.3 safety checklist (mandatory), 1.4 write the artifact file, 1.5 action plan output
+- Phase 2 — Post-stay review: 2.1 four-question batch, 2.1.5 Disconfirm probe, 2.2 determine rating, 2.3 learning signals, 2.4 write to booking-history, 2.5 blacklist auto-append, 2.6 positive-reference auto-append, 2.7 signals for profile update
+- Anti-patterns
+- Success criteria (per phase)
+
 <required_reading>
 **Read BEFORE recording:**
 1. `references/feedback-format.md` — recording format and rating scale
@@ -188,7 +196,7 @@ If this hotel has a Phase 1 "Upcoming" H3-block → **update that block in place
 
 **Matching key:** match by `Hotel name + check-in date (YYYY-MM-DD from header line)`. If the same hotel was stayed twice with different check-in dates, each gets a separate H3-block — never collapse two stays into one.
 
-Otherwise, append a fresh H3-block at the end of the new-stays section.
+Otherwise, append a fresh H3-block at the end of the `## Stays` section.
 
 ### Step 2.5: Blacklist auto-append
 

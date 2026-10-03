@@ -2,7 +2,7 @@
 name: hotel
 description: Find hotels matching taste profile. This skill should be used when the user asks for hotel recommendations, wants to rate a hotel stay, or asks to analyze hotel preferences. Triggers on hotel search, "where to stay", accommodation, city names with hotel context.
 argument-hint: [city budget/occasion]
-version: "1.1.1"
+version: "1.2"
 ---
 
 <essential_principles>
@@ -46,7 +46,7 @@ Vibe references come from the user's `taste-profile.md` TOP-3, Strong, and Aspir
 
 User-specific data (taste-profile, booking history, city caches) lives at `~/.claude/skills/hotel/data/`. The skill creates this on first run via `install.sh`.
 
-Templates in this repo (`taste-profile-template.md`, `booking-history-template.md`, `cities-template.md`) provide the structure — `install.sh` copies them to `data/` if not already present.
+Templates in this repo (`taste-profile-template.md`, `booking-history-template.md`, `cities-template.md`) provide the structure — `install.sh` copies them to `data/` if not already present. The `feedback/` and `trips/` folders are created by the workflows the first time they write there.
 
 Files inside `data/`:
 
@@ -55,6 +55,9 @@ Files inside `data/`:
 | `taste-profile.md` | Full taste profile (anchors, formula, anti-patterns, pet, home city) |
 | `booking-history.md` | Booking history with ratings (Peak/End/Disconfirm/Return H3-blocks) |
 | `cities/{city-slug}.md` | Per-city continuation cache (Recommended / Mentioned / Excluded / Rounds) |
+| `cities/README.md` | City-slug rule and canonical cache section order (seeded by `install.sh`) |
+| `feedback/feedback_{city-slug}_hotels.md` | Per-city `## Blacklist` and `## Positive reference` tables. Written by `workflows/rate-stay.md` Phase 2 (Steps 2.5–2.6); read by `workflows/find-hotel.md` (required reading + Step 2d). Uses the compact feedback-file slug defined in rate-stay Step 2.5 |
+| `trips/{city-slug}-{YYYY-MM}/` | Per-trip folder: `hotels-shortlist.md` (file mode, `references/format-guide.md`) and `booking-details.md` + `booking-confirmation.{ext}` (rate-stay Phase 1) |
 </data_layout>
 
 <intake>
@@ -144,13 +147,13 @@ Internal artifacts (`cities/{city-slug}.md`, `taste-profile.md`, `booking-histor
 <reference_index>
 ## Reference Materials
 
-All in `references/`:
+All in `references/`. Each workflow's `<required_reading>` block (or the named step) says when to read them:
 
-**Search:** search-sources.md — query patterns per source, search strategy, A/B/C reliability tiers
-**Format:** format-guide.md — response format, vibe comparisons, file-mode rule, `{city-slug}-{YYYY-MM}` convention
-**Feedback:** feedback-format.md — stay review format, rating scale
-**Occasion:** occasion-taxonomy.md — six occasions, ranking modifiers, anchors
-**Pet:** pet-search.md — pet-friendly protocol, room-type trap, cross-reference rules, pet-paradox detection, call scripts
+**Search:** `references/search-sources.md` — query patterns per source, search strategy, A/B/C reliability tiers. Read by find-hotel (required reading).
+**Format:** `references/format-guide.md` — response format, vibe comparisons, calibration anchors, file-mode rule, `{city-slug}-{YYYY-MM}` convention. Read by find-hotel and rate-stay (required reading).
+**Feedback:** `references/feedback-format.md` — stay review format, rating scale. Read by rate-stay (required reading).
+**Occasion:** `references/occasion-taxonomy.md` — six occasions, ranking modifiers, anchors. Read at find-hotel Step 1a.
+**Pet:** `references/pet-search.md` — pet-friendly protocol, room-type trap, cross-reference rules, pet-paradox detection, call scripts. Read by find-hotel (required reading; applied when a pet is set) and for rate-stay Phase 1 pet flags.
 </reference_index>
 
 <workflows_index>
@@ -158,7 +161,7 @@ All in `references/`:
 
 | Workflow | Purpose |
 |---|---|
-| find-hotel.md | Find a hotel: city + budget -> search -> filter -> 5+2 options |
-| rate-stay.md | Record a post-stay review -> update booking-history |
-| learn.md | Analyze bookings -> detect patterns -> update profile |
+| `workflows/find-hotel.md` | Find a hotel: city + budget -> search -> filter -> 5+2 options |
+| `workflows/rate-stay.md` | Phase 1: record a booking confirmation (safety checklist). Phase 2: record a post-stay review -> update booking-history |
+| `workflows/learn.md` | Analyze bookings -> detect patterns -> update profile |
 </workflows_index>

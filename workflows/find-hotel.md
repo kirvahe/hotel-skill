@@ -1,5 +1,21 @@
 # Workflow: Find a Hotel
 
+## Contents
+- Required reading (load before searching)
+- Process state (`continuation_state`)
+- Step 0: Pre-search continuation check (city cache)
+- Step 1: Parse the request — 1a occasion inference, 1b pet filter parsing, 1c echo inferred state
+- Step 2: Check existing data — 2a booking history, 2b problematic cities, 2c taste-profile references, 2d blacklist cross-check, 2e Spain festivo + puente-risk check
+- Step 3: Search sources (minimum 6 parallel queries)
+- Step 4: Filter results
+- Step 5: Operational verification (top-3 finalists)
+- Step 6: Format response (5 main + 2 premium)
+- Step 7: Summary table
+- Step 8: Save output and update city cache
+- Anti-patterns
+- Success criteria
+- Output contract (final check, read last before replying)
+
 <required_reading>
 **Read BEFORE searching:**
 1. `~/.claude/skills/hotel/data/taste-profile.md` — full profile

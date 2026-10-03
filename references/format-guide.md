@@ -1,3 +1,11 @@
+## Contents
+- File-mode rule (decide before writing the response) — path convention, terminal response in file mode, when not to use it
+- Format per hotel — mandatory and optional elements, Overview line
+- References for vibe comparisons
+- Calibration anchors — tiers and how they are used
+- Number of recommendations (5 main + 2 premium)
+- Summary table
+
 <overview>
 Response format when recommending hotels. Each hotel — structured, with mandatory elements.
 </overview>

@@ -1,3 +1,10 @@
+## Contents
+- File location
+- Stay entry format — H3-block template, Disconfirm must-fill, rating decimals
+- Rating scale (1–10, aligned with Booking.com)
+- Learning signals
+- booking-history.md structure
+
 <overview>
 Format for recording hotel stay reviews. Booking-history is the key file for system learning.
 </overview>

@@ -1,5 +1,17 @@
 # Workflow: Analyze Preferences and Update Profile
 
+## Contents
+- Required reading (load before analysis)
+- Step 1: Load all data — stale-Upcoming pre-flight, entry reader, basic statistics
+- Step 2: Identify high-rating patterns (8–10)
+- Step 3: Identify low-rating patterns (1–5)
+- Step 4: Compare with current profile
+- Step 5: Propose profile updates (wait for confirmation)
+- Step 6: Apply approved changes
+- Step 7: Report
+- Anti-patterns
+- Success criteria
+
 <required_reading>
 **Read BEFORE analysis:**
 1. `~/.claude/skills/hotel/data/booking-history.md` — all bookings

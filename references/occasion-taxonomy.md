@@ -5,6 +5,12 @@ description: Six-occasion taxonomy for hotel search. Occasion is a first-class i
 
 # Occasion Taxonomy — Hotels
 
+## Contents
+- The six occasions — city-break, ski, beach, anniversary, concert, new-country-exploration (definition, ranking modifiers, anti-patterns, anchor)
+- Pet parameter
+- Inference defaults
+- Multi-occasion contexts
+
 The same person has radically different hotel needs depending on the occasion. A "ski trip in Andermatt" and a "concert weekend in Lisbon" cannot share the same ranking function, even for the same traveler. This taxonomy makes occasion a first-class input to ranking — composed into the candidate score, not applied as a downstream filter.
 
 Occasion is inferred in **Step 1 of `workflows/find-hotel.md`**, propagates through `continuation_state`, and is surfaced in the **Overview line** per `references/format-guide.md`.

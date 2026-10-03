@@ -73,7 +73,7 @@ The profile is the calibration source. Edit `taste-profile.md` and fill in at mi
 - **Genius Level** (Booking.com) — used in anniversary upgrade probability
 - **Pet baseline** — pet-friendly is a boolean filter, not an occasion
 
-Onboarding is currently manual via the template; a guided flow is on the v1.2 roadmap.
+Onboarding is currently manual via the template; a guided flow is on the v1.3 roadmap.
 
 ## Requirements
 
@@ -126,6 +126,8 @@ analyze my hotel preferences
   taste-profile.md                  # TOP-3, anchors, anti-patterns, references
   booking-history.md                # Peak / End / Disconfirm / Return blocks per stay
   cities/{slug}.md                  # City caches — Searched / Recommended / Mentioned / Excluded
+  feedback/                         # Per-city blacklist + positive-reference files (written by rate-stay)
+  trips/{slug}-{YYYY-MM}/           # Per-trip shortlist and booking-confirmation artifacts
   recommendations/                  # Saved recommendation outputs
 ```
 

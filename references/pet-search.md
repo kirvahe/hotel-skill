@@ -1,3 +1,11 @@
+## Contents
+- The room-type trap
+- Welcome vs tolerate markers
+- Cross-reference rule — A/B/C tiers for pet-friendly claims
+- Pet-paradox city detection (<20% hit rate after 5 candidates)
+- Call scripts — Spanish, English, placeholders
+- Anti-patterns
+
 <overview>
 Pet-friendly hotel protocol. If a pet is set in the user's `taste-profile.md` `## Pet` section, pet-friendly is a baseline filter on every trip by default — not a mode. This file is the lookup reference for the four traps that repeatedly cost tokens and user trust: room-type-level pet blocks, welcome-vs-tolerate confusion, single-source false positives, and pet-paradox cities.
 </overview>

@@ -1,3 +1,10 @@
+## Contents
+- Sources (when / why / query patterns): Reddit; multi-language Reddit subs; owner / architect / designer interviews (A-tier); Condé Nast Traveller; collections & curators; Mr & Mrs Smith / Tablet Hotels; Google Maps; Booking.com
+- Banned sources (NEVER use)
+- Reliability tiers A/B/C (single taxonomy) and known C-tier failure cases
+- Booking-rating bias adjustment
+- Search strategy — minimum queries, priority order, validation, cities with quirks
+
 <overview>
 Search query patterns for each approved source. Goal: maximum recommendation accuracy for boutique/design hotels.
 </overview>
