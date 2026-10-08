@@ -2,6 +2,7 @@
 
 > **Structure:** All stays use the H3-block format (Peak / End / Disconfirm / Return) under `## Stays`.
 > See `~/.claude/skills/hotel/references/feedback-format.md` for the canonical template.
+> Older stays from before you started using the skill can go under `## Legacy stays` as a table (Hotel | City | Dates | Rating | Comment); `/hotel learn` reads both sections.
 
 *Last analysis: —*
 

@@ -8,12 +8,20 @@
 ## Who
 
 - **Travel companions:** <!-- couple / family / solo / friends / mix -->
-- **Home city:** <!-- City, neighborhood (optional) -->
-- **Pet by default:** <!-- yes (breed, weight) / no / sometimes -->
+- **Home city:** see Base
+- **Pet:** see Pet
 - **Booking cadence:** <!-- last-minute (1-2 weeks out) / planned 1-2 months ahead / mix -->
 - **Budget per night:** <!-- e.g. EUR 150-350 typical, up to EUR 500+ for special -->
 - **Loyalty programs:** <!-- Booking.com Genius L?, Marriott Bonvoy tier, Hilton Honors, none -->
 - **Trip types:** <!-- city / culture / ski / beach / wine country / mix -->
+
+## Base
+
+- **Home:** <!-- City, neighbourhood (optional) -->
+
+## Pet
+
+<!-- Breed and weight, or "none". /hotel asks per trip whether the pet travels. -->
 
 ---
 
@@ -70,7 +78,7 @@ Aim for 5-8 bullets. Be specific — mention what you actually notice on arrival
 
 ---
 
-## TOP-3 reference hotels
+## TOP-3
 
 <!-- Three slots that anchor your scale. Choose hotels you actually stayed at. -->
 
@@ -82,7 +90,7 @@ Aim for 5-8 bullets. Be specific — mention what you actually notice on arrival
 
 ---
 
-## Strong (other hotels rated 8+)
+## Strong
 
 <!-- Hotels rated 8.0 or higher beyond the TOP-3. Format: Hotel | City | Rating | One-line note. -->
 
@@ -103,7 +111,7 @@ Aim for 5-8 bullets. Be specific — mention what you actually notice on arrival
 | <!-- e.g. Lisbon/Porto — 5 — 3 — Portugal works, boutique > chain --> | | | |
 | | | | |
 
-### Problem cities
+## Problematic cities
 
 <!-- Cities where you've struck out — needs targeted research next time.
 e.g. Rome — 3 bookings, all 1-4 — never found "your" hotel here. -->
@@ -188,3 +196,11 @@ TripAdvisor, generic "Top 10" listicles, Instagram-only hype, package-tour aggre
 - No active renovation during dates
 - Pet-friendly if pet is travelling
 - Avoid chains: NH, Occidental, Catalonia, Novotel, Ibis, Mercure -->
+
+### Limited-choice cities
+
+<!-- Cities where the choice is thin and the rating floor is shown as a flag instead of a cut-off. e.g. a small town with three hotels. -->
+
+## Negative keywords
+
+<!-- Words that, in your stay reviews, mean "never again". e.g. soulless, like an office. -->
