@@ -8,6 +8,7 @@ Layout (inside the user's data folder):
         envelope-{family}.json     the family agent's status report
         evidence.jsonl             availability, closure, pet and scarcity evidence
         state.json                 current stage, families still running, history
+        (later stages add more files; bin/runfiles.py lists them all)
 
 Usage:
     python3 ledger.py init --data DIR --city NAME --check-in YYYY-MM-DD --check-out YYYY-MM-DD

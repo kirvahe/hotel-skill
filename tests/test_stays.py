@@ -79,6 +79,13 @@ class StaysTest(unittest.TestCase):
         self.assertFalse(gone["rated"])
         self.assertEqual(out["counts"]["rated"], 4)
 
+    def test_legacy_comment_is_kept_for_past_stays(self):
+        result, out = run(HISTORY)
+        beta = [s["comment"] for s in out["stays"] if s["hotel"] == "Casa Beta"]
+        self.assertEqual(beta, ["Meh", "Repeat"])
+        alpha = next(s for s in out["stays"] if s["hotel"] == "Hotel Alpha")
+        self.assertEqual(alpha["comment"], "")
+
     def test_rating_scale_table_is_not_a_stay(self):
         result, out = run(HISTORY)
         self.assertNotIn("9–10", [s["hotel"] for s in out["stays"]])

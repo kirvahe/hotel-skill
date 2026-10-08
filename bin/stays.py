@@ -9,6 +9,7 @@ column (the per-year tables under "## Legacy stays"). New stays are H3 blocks
 under "## Stays" with the header "### {Hotel} — {City}, {YYYY-MM-DD} — {Rating}/10"
 (or "— Upcoming" for a booking not yet reviewed).
 
+Each stay carries its comment (legacy tables) for revisits.
 Ratings are returned exactly as written ("5-6 (7 для Примерска)" stays as is);
 "rated" is false for "—", "?" or an empty cell, and for Upcoming blocks.
 
@@ -48,6 +49,7 @@ def parse(text: str) -> list[dict]:
                 "city": match.group("city").strip(),
                 "date": match.group("date"),
                 "rating": "" if upcoming else rating.strip(),
+                "comment": "",
                 "rated": not upcoming and rating.strip() not in UNRATED,
                 "upcoming": upcoming,
                 "section": "stays",
@@ -58,7 +60,7 @@ def parse(text: str) -> list[dict]:
         if line.lstrip().startswith("|") and next_line.lstrip().startswith("|"):
             header = [cell.lower() for cell in _cells(line)]
             if "hotel" in header and "rating" in header:
-                cols = {name: header.index(name) for name in ("hotel", "city", "dates", "rating") if name in header}
+                cols = {name: header.index(name) for name in ("hotel", "city", "dates", "rating", "comment") if name in header}
                 i += 2
                 while i < len(lines) and lines[i].lstrip().startswith("|"):
                     cells = _cells(lines[i])
@@ -69,6 +71,7 @@ def parse(text: str) -> list[dict]:
                         "city": get("city"),
                         "date": get("dates"),
                         "rating": rating,
+                        "comment": get("comment"),
                         "rated": rating not in UNRATED,
                         "upcoming": False,
                         "section": "legacy",
