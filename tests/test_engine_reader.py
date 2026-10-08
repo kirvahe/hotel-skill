@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from datetime import date
 from pathlib import Path
@@ -169,6 +170,13 @@ class OfficialSiteTest(unittest.TestCase):
         self.assertEqual(record["kind"], "engine_price")
         self.assertEqual(record["source_url"], ENGINE)
 
+    def test_home_page_with_other_dates_goes_on_to_the_engine(self):
+        fetch = SavedPages({SITE: "site-offer-today.html", ENGINE: "priced-es.html"})
+        record, _ = reader.read_engine("Casa del Aljibe Inventada", SITE, TRIP, fetch,
+                                       page_timeout_s=10, give_up_after_s=20, engines=[])
+        self.assertEqual(fetch.requested, [SITE, ENGINE])
+        self.assertEqual((record["kind"], record["source_url"], record["price_eur"]), ("engine_price", ENGINE, 160.0))
+
     def test_give_up_rule_stops_before_the_next_page(self):
         now = [0.0]
         pages = SavedPages({SITE: "site-own-engine.html", ENGINE: "priced-es.html"})
@@ -223,6 +231,16 @@ class KnownEngineTest(unittest.TestCase):
                          "https://reservas.clave-demo.example/index?siteKey=x1&lang=es"
                          "&from=20/11/2026&to=22/11/2026&adults=2")
 
+    def test_path_replace_swaps_the_start_page_for_the_results_page(self):
+        table = [dict(KNOWN[1], path_replace=["/start.xhtml", "/result.xhtml"])]
+        url = reader.dated_url("https://reservas.clave-demo.example/site/start.xhtml?siteKey=x1", TRIP, table)
+        self.assertTrue(url.startswith("https://reservas.clave-demo.example/site/result.xhtml?siteKey=x1&"), url)
+
+    def test_path_sets_the_engine_page_for_a_link_to_the_site_root(self):
+        table = [dict(KNOWN[1], path="/en/hotel/demo")]
+        url = reader.dated_url("https://reservas.clave-demo.example/", TRIP, table)
+        self.assertTrue(url.startswith("https://reservas.clave-demo.example/en/hotel/demo?from="), url)
+
     def test_unknown_engine_is_left_alone(self):
         self.assertIsNone(reader.dated_url("https://reservas.motor-demo.example/casa-aljibe", TRIP, KNOWN))
 
@@ -245,20 +263,55 @@ class KnownEngineTest(unittest.TestCase):
         self.assertEqual(fetch.requested, [DATED])
         self.assertEqual(record["kind"], "engine_price")
 
+    def test_the_users_engines_are_added_to_the_skills(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            local = Path(tmp) / "engines.json"
+            local.write_text(json.dumps({"engines": [KNOWN[1]]}), encoding="utf-8")
+            table = reader.load_engines([reader.ENGINES_FILE, local, Path(tmp) / "missing.json"])
+        self.assertEqual(table[-1]["name"], "Motor Con Clave")
+        self.assertEqual(len(table), len(reader.load_engines([reader.ENGINES_FILE])) + 1)
+
     def test_shipped_engine_table_is_well_formed(self):
-        table = reader.load_engines()
+        table = reader.load_engines([reader.ENGINES_FILE])
         self.assertTrue(table)
         for engine in table:
             with self.subTest(engine.get("name")):
-                self.assertEqual(set(engine) - {"note"},
+                self.assertEqual(set(engine) - {"note", "path", "path_replace"},
                                  {"name", "hosts", "params", "guests_param", "default_guests", "verified"})
                 self.assertTrue(engine["hosts"])
                 date.fromisoformat(engine["verified"])
                 url = f"https://{engine['hosts'][0]}/x/"
                 guests = engine["default_guests"] or 2
                 dated = reader.dated_url(url, reader.Trip(TRIP.check_in, TRIP.check_out, guests), table)
-                self.assertTrue(dated and dated.startswith(url + "?"), dated)
+                page = f"https://{engine['hosts'][0]}{engine.get('path') or '/x/'}"
+                self.assertTrue(dated and dated.startswith(page + "?"), dated)
                 self.assertNotIn("{", dated)
+
+
+class RedirectProbeTest(unittest.TestCase):
+    def test_probe_reads_redirects_from_sites_with_an_incomplete_certificate_chain(self):
+        # The probe only reads the status and Location header; the browser itself still checks
+        # certificates when it opens the page. A real hotel site sent an incomplete chain.
+        calls = []
+
+        class Response:
+            status, headers = 200, {}
+
+            def dispose(self):
+                pass
+
+        class Request:
+            def get(self, url, **kwargs):
+                calls.append(kwargs)
+                return Response()
+
+        class Context:
+            request = Request()
+
+        fetcher = reader.BrowserFetcher(Context(), Exception)
+        self.assertEqual(fetcher._probe("https://hotel.example/", 1000), (200, None))
+        self.assertTrue(calls[0].get("ignore_https_errors"))
+        self.assertEqual(calls[0].get("max_redirects"), 0)
 
 
 class MissingPlaywrightTest(unittest.TestCase):
@@ -358,6 +411,20 @@ class PatternTableTest(unittest.TestCase):
         self.assertEqual(record["price_eur"], 160.0)
         self.assertEqual(record["quote"], "Doble 160 €")
 
+    def test_amount_with_the_currency_and_night_on_the_next_line(self):
+        record = self.classify(self.DATES, "217 €", "184", "EURnight", "194", "EURnight",
+                               "Not included: City tax 9,24 EUR per person/night")
+        self.assertEqual((record["price_eur"], record["price_basis"]), (184.0, "per_night"))
+        self.assertEqual(record["quote"], "184 EURnight")
+
+    def test_a_page_that_blocks_the_browser_says_so(self):
+        for lines in (["403 ERROR", "The request could not be satisfied."], ["Access is temporarily restricted"],
+                      ["Please complete the CAPTCHA to continue"]):
+            with self.subTest(lines[0]):
+                record = self.classify(*lines)
+                self.assertEqual(record["kind"], "engine_unreadable")
+                self.assertTrue(record["reason"].startswith("blocked"), record["reason"])
+
     def test_price_without_dates_is_unknown(self):
         record = self.classify("Doble 140 €")
         self.assertEqual(record["kind"], "engine_unreadable")
@@ -369,6 +436,10 @@ class PatternTableTest(unittest.TestCase):
             "spanish words": ["20 de noviembre de 2026 – 22 de noviembre de 2026"],
             "french without year": ["ven. 20 nov. – dim. 22 nov."],
             "english month first": ["Nov 20, 2026 - Nov 22, 2026"],
+            "day range": ["20 - 22 Nov 2026"],
+            "spanish day range": ["del 20 al 22 de noviembre de 2026"],
+            "month first range without year": ["Nov 20-22"],
+            "one part per line": ["Check in", "20", "Nov", "2026", "Check out", "22", "Nov", "2026"],
         }
         for name, lines in cases.items():
             with self.subTest(name):
@@ -396,6 +467,19 @@ class HeadlessBrowserOnSavedPagesTest(unittest.TestCase):
         self.assertEqual(record["kind"], "engine_price")
         self.assertEqual(record["price_eur"], 160.0)
         self.assertEqual(record["dates_shown"]["check_in"], "2026-11-20")
+
+    def test_frames_without_a_body_do_not_stall_the_read(self):
+        start = time.monotonic()
+        record = self.read_live("svg-frames-en.html")
+        self.assertLess(time.monotonic() - start, 8)  # the page timeout here is 10 s
+        self.assertEqual((record["kind"], record["price_eur"], record["price_basis"]), ("engine_price", 144.0, "per_night"))
+
+    def test_dates_in_the_search_boxes_of_a_framed_engine(self):
+        record = self.read_live("framed-inputs-en.html")
+        self.assertEqual(record["kind"], "engine_price")
+        self.assertEqual((record["dates_shown"]["check_in"], record["dates_shown"]["check_out"]),
+                         ("2026-11-20", "2026-11-22"))
+        self.assertEqual((record["price_eur"], record["price_basis"]), (240.0, "unknown"))
 
     def test_text_hidden_by_a_stylesheet_is_not_read(self):
         record = self.read_live("css-hidden-es.html")

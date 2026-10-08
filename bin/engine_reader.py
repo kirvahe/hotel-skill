@@ -19,7 +19,8 @@ Usage:
 --url may hold {check_in}, {check_out} and {guests} placeholders, which take the trip values;
 a date placeholder accepts a strftime format, e.g. {check_in:%d/%m/%Y}. That is how a caller
 sets the dates on an engine that takes them in its URL.
-Known engines (bin/engines.json) need no placeholders: when the start URL or the hotel's booking
+Known engines (bin/engines.json, plus data/engines.json for engines on one hotel's own
+subdomain) need no placeholders: when the start URL or the hotel's booking
 link is on a known engine's host, the reader opens it with the trip dates filled in.
 --page-timeout-s   the longest wait for one page to load and settle.
 --give-up-after-s  the per-engine give-up rule: total time for every page of one read (redirect
@@ -42,8 +43,10 @@ the nights. Lines for another number of nights (a longer-stay offer), tax and sa
 other sites' prices ("Booking.com: 428 €", or the label on the line before the amount) never
 count. When no line says per night or total, price_eur is the lowest amount left and price_basis
 is "unknown": it may be the price per night or for the whole stay.
-When the start page gives no engine evidence, the reader follows the first booking link on it
-that is not Booking or Airbnb, once, and that page decides.
+When the start page gives no engine evidence for the trip dates (a home page often shows today's
+dates in its search box), the reader follows the first booking link on it that is not Booking or
+Airbnb, once, and that page decides. A page that refuses automated browsers (an HTTP 403 page, a
+CAPTCHA) is recorded as engine_unreadable with a reason that starts with "blocked".
 
 Exit codes:
     0  a record was written (any kind)
@@ -71,6 +74,8 @@ from ledger import ENGINE_KINDS, validate_evidence  # noqa: E402
 
 EXIT_OK, EXIT_INVALID, EXIT_USAGE, EXIT_REFUSED, EXIT_SKIPPED = 0, 1, 2, 3, 4
 ENGINES_FILE = Path(__file__).resolve().parent / "engines.json"
+# Engines on one hotel's own subdomain live with the user's data, not in the skill.
+LOCAL_ENGINES_FILE = Path(__file__).resolve().parent.parent / "data" / "engines.json"
 SKIP_MESSAGE = "SKIPPED: background browser not installed"
 NO_TEXT = "[no page text]"
 
@@ -163,6 +168,12 @@ NIGHTS_WORD = "(?:" + "|".join(p for patterns in PATTERNS["nights"].values() for
 # "× 2 nights": the amount before the sign is per night. A letter x counts only on its own ("max 2").
 TIMES_NIGHTS = re.compile(r"(?<![a-z])[×x*]\s?(\d{1,2})\s?" + NIGHTS_WORD)
 N_NIGHTS = re.compile(r"\b(\d{1,2})\s?" + NIGHTS_WORD)
+# "184" on one line and "EURnight" on the next: the amount and its currency, split by the layout.
+BARE_AMOUNT = re.compile(r"^\d{1,5}(?:[.,]\d{1,2})?$")
+# A currency glued to a night word ("eurnight", "€/night") says per night.
+CURRENCY_NIGHT = re.compile(r"(?:€|\beur)\s?/?\s?" + NIGHTS_WORD)
+# Pages that refuse automated browsers. Checked only when a page shows no price and no statement.
+BLOCKED = re.compile(r"\b403 error\b|access is temporarily restricted|\bcaptcha\b|request blocked|access denied")
 # Calendar legends: one or two symbols, then "=" and the meaning ("× = No availability").
 LEGEND = re.compile(r"^\s*\S{1,2}\s*=\s*")
 # Other sites' prices, shown by some engines to prove theirs is lower. Folded, like the patterns.
@@ -181,6 +192,10 @@ ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
 NUMERIC_DATE = re.compile(r"\b(\d{1,2})[/.-](\d{1,2})[/.-](\d{4})\b")  # day first
 DAY_MONTH = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th|er|º|°)?\.?\s+(?:de\s+)?(" + _alternation(MONTH_NUMBER)
                        + r")\b\.?(?:,?\s+(?:de\s+)?(\d{4})\b)?")
+# Ranges: "20 - 22 Nov 2026", "del 20 al 22 de noviembre", "du 20 au 22 nov.", "Nov 20-22".
+DAY_RANGE = re.compile(r"\b(\d{1,2})\s?(?:[-–]|al|au|a|to)\s?(\d{1,2})\s+(?:de\s+)?(" + _alternation(MONTH_NUMBER)
+                       + r")\b\.?(?:,?\s+(?:de\s+)?(\d{4})\b)?")
+MONTH_DAY_RANGE = re.compile(r"\b(" + _alternation(ENGLISH_MONTHS) + r")\b\.?\s+(\d{1,2})\s?[-–]\s?(\d{1,2})\b(?:,?\s+(\d{4})\b)?")
 MONTH_DAY = re.compile(r"\b(" + _alternation(ENGLISH_MONTHS) + r")\b\.?\s+(\d{1,2})(?:st|nd|rd|th)?\b(?:,?\s+(\d{4})\b)?")
 
 
@@ -276,6 +291,7 @@ def _amounts(folded: str) -> list:
 
 def _line_price(folded: str, nights: int) -> tuple | None:
     """(per-night amount, "per_night") or (amount, "unknown") for one line, or None when it does not count."""
+    folded = re.sub(r"(€|\beur)(?=" + NIGHTS_WORD + ")", r"\1 ", folded)
     amounts = _amounts(folded)
     if not amounts:
         return None
@@ -286,7 +302,7 @@ def _line_price(folded: str, nights: int) -> tuple | None:
         before = [amount for amount, end in amounts if end <= times.start()]
         return (before[-1] if before else min(a for a, _ in amounts)), "per_night"
     lowest = min(amount for amount, _ in amounts)
-    if any(p.search(folded) for p in PER_NIGHT):
+    if CURRENCY_NIGHT.search(folded) or any(p.search(folded) for p in PER_NIGHT):
         return lowest, "per_night"
     count = N_NIGHTS.search(folded)
     if count:
@@ -294,6 +310,20 @@ def _line_price(folded: str, nights: int) -> tuple | None:
     if any(p.search(folded) for p in TOTAL):
         return lowest / nights, "per_night"
     return lowest, "unknown"
+
+
+def _joined_amounts(lines: list) -> list:
+    """The lines, with a bare amount joined to a next line that starts with its currency."""
+    out, i = [], 0
+    while i < len(lines):
+        following = fold(lines[i + 1]).lstrip() if i + 1 < len(lines) else ""
+        if BARE_AMOUNT.match(lines[i].strip()) and following.startswith(("€", "eur")):
+            out.append(f"{lines[i].strip()} {lines[i + 1].strip()}")
+            i += 2
+        else:
+            out.append(lines[i])
+            i += 1
+    return out
 
 
 def room_price(lines: list, trip: Trip) -> tuple | None:
@@ -305,7 +335,7 @@ def room_price(lines: list, trip: Trip) -> tuple | None:
     nights = (trip.check_out - trip.check_in).days
     best = {"per_night": None, "unknown": None}
     after_other_site = False
-    for line in lines:
+    for line in _joined_amounts(lines):
         folded = fold(line)
         label_only = bool(OTHER_SITES.search(folded)) and not _amounts(folded)
         skip = after_other_site or OTHER_SITES.search(folded) or any(p.search(folded) for p in NOT_A_ROOM_PRICE)
@@ -350,12 +380,34 @@ def _dates_in(line: str, trip: Trip) -> list:
         year = int(match[3]) if match[3] else None
         found.append((match.start(), _dated(int(match[1]), MONTH_NUMBER[match[2]], year, trip)))
         spans.append(match.span())
+    for match in DAY_RANGE.finditer(folded):
+        year = int(match[4]) if match[4] else None
+        month = MONTH_NUMBER[match[3]]
+        found += [(match.start(), _dated(int(match[1]), month, year, trip)),
+                  (match.start() + 1, _dated(int(match[2]), month, year, trip))]
+        spans.append(match.span())
+    for match in MONTH_DAY_RANGE.finditer(folded):
+        year = int(match[4]) if match[4] else None
+        month = MONTH_NUMBER[match[1]]
+        found += [(match.start(), _dated(int(match[2]), month, year, trip)),
+                  (match.start() + 1, _dated(int(match[3]), month, year, trip))]
+        spans.append(match.span())
     for match in MONTH_DAY.finditer(folded):
         if any(match.start() < end and start < match.end() for start, end in spans):
             continue
         year = int(match[3]) if match[3] else None
         found.append((match.start(), _dated(int(match[2]), MONTH_NUMBER[match[1]], year, trip)))
     return [day for _, day in sorted(found, key=lambda item: item[0]) if day]
+
+
+def _date_texts(lines: list) -> list:
+    """(text, quote) to search for dates: every line, and a day, month and year on three lines of their own."""
+    texts = [(line, line) for line in lines]
+    for i in range(len(lines) - 2):
+        day, month, year = (fold(line).strip().rstrip(".") for line in lines[i:i + 3])
+        if re.fullmatch(r"\d{1,2}", day) and month in MONTH_NUMBER and re.fullmatch(r"\d{4}", year):
+            texts.append((f"{day} {month} {year}", " / ".join(line.strip() for line in lines[i:i + 3])))
+    return texts
 
 
 def dates_shown(lines: list, trip: Trip) -> dict | None:
@@ -365,9 +417,9 @@ def dates_shown(lines: list, trip: Trip) -> dict | None:
     dates on the page are, earlier first. None when the page shows fewer than two dates.
     """
     first_line = {}
-    for line in lines:
-        for day in _dates_in(line, trip):
-            first_line.setdefault(day, line)
+    for text, quote in _date_texts(lines):
+        for day in _dates_in(text, trip):
+            first_line.setdefault(day, quote)
     if trip.check_in in first_line and trip.check_out in first_line:
         check_in, check_out = trip.check_in, trip.check_out
     elif len(first_line) >= 2:
@@ -395,6 +447,9 @@ def classify(candidate: str, page: Page, trip: Trip) -> dict:
     if price or no_rooms:
         return unreadable(candidate, page.url, price[1] if price else no_rooms,
                           "the page shows a price or a no-availability statement but no check-in and check-out dates")
+    blocked = next((line for line in page.lines if BLOCKED.search(fold(line))), None)
+    if blocked:
+        return unreadable(candidate, page.url, blocked, "blocked: the site refuses automated browsers")
     return unreadable(candidate, page.url, page.lines[0] if page.lines else NO_TEXT,
                       "the page shows neither a price in EUR nor a no-availability statement")
 
@@ -417,11 +472,13 @@ def booking_link(page: Page) -> tuple:
 
 # ---------------------------------------------------------------- known engines
 
-def load_engines(path: Path = ENGINES_FILE) -> list:
-    """The known-engine table; empty when the file is missing."""
-    if not path.is_file():
-        return []
-    return json.loads(path.read_text(encoding="utf-8"))["engines"]
+def load_engines(paths=(ENGINES_FILE, LOCAL_ENGINES_FILE)) -> list:
+    """The known-engine table: the skill's engines, then the user's; a missing file adds nothing."""
+    engines = []
+    for path in paths:
+        if Path(path).is_file():
+            engines += json.loads(Path(path).read_text(encoding="utf-8"))["engines"]
+    return engines
 
 
 def _fill(template: str, trip: Trip) -> str:
@@ -447,10 +504,18 @@ def dated_url(url: str, trip: Trip, engines: list) -> str | None:
     query += [(key, _fill(value, trip)) for key, value in engine["params"].items()]
     if guests_param:
         query.append((guests_param, str(trip.guests)))
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query, safe="/"), ""))
+    path = engine.get("path") or parts.path
+    if engine.get("path_replace"):
+        path = path.replace(*engine["path_replace"])
+    return urlunsplit((parts.scheme, parts.netloc, path, urlencode(query, safe="/"), ""))
 
 
 # ---------------------------------------------------------------- one engine read
+
+def _for_trip(record: dict, trip: Trip) -> bool:
+    shown = record.get("dates_shown") or {}
+    return (shown.get("check_in"), shown.get("check_out")) == (trip.check_in.isoformat(), trip.check_out.isoformat())
+
 
 def read_engine(candidate: str, url: str, trip: Trip, fetch, *, page_timeout_s: float,
                 give_up_after_s: float, clock=time.monotonic, engines: list | None = None) -> tuple:
@@ -475,10 +540,10 @@ def read_engine(candidate: str, url: str, trip: Trip, fetch, *, page_timeout_s: 
     try:
         page = load(target)
         record = classify(candidate, page, trip)
-        if record["kind"] in ENGINE_KINDS:
+        if record["kind"] in ENGINE_KINDS and _for_trip(record, trip):
             return record, False
         link, refused_links = booking_link(page)
-        if link is None and refused_links:
+        if link is None and refused_links and record["kind"] not in ENGINE_KINDS:
             href, text = refused_links[0]
             return refusal(candidate, page.url, href, text), True
         if link is None:
@@ -618,6 +683,9 @@ def fixture_fetcher(start_url: str, html_file: Path):
 _VISIBLE_INPUT_VALUES = ("els => els.filter(e => e.value && e.checkVisibility({visibilityProperty: true}))"
                          ".map(e => e.value)")
 _LINKS = "els => els.map(a => [a.href, (a.innerText || a.getAttribute('aria-label') || a.title || '').trim()])"
+# document.body, not a "body" selector: a frame with no body (an SVG icon) would wait the full timeout.
+_BODY_TEXT = "() => document.body ? document.body.innerText : ''"
+_TEXT_INPUTS = "input:not([type=hidden]):not([type=checkbox]):not([type=radio])"
 
 
 def _first_line(error: Exception) -> str:
@@ -641,7 +709,10 @@ class BrowserFetcher:
 
     def _probe(self, url: str, timeout_ms: float) -> tuple:
         try:
-            response = self.context.request.get(url, max_redirects=0, timeout=timeout_ms)
+            # ignore_https_errors: this request only reads the status and Location header. Some hotel
+            # sites send an incomplete certificate chain that browsers complete and Node does not;
+            # the browser still checks the certificate when it opens the page.
+            response = self.context.request.get(url, max_redirects=0, timeout=timeout_ms, ignore_https_errors=True)
         except self.error as error:
             raise PageError(f"could not check {url} for redirects: {_first_line(error)}") from None
         try:
@@ -681,15 +752,16 @@ class BrowserFetcher:
                     raise Refused(hop)
             lines = []
             for frame in page.frames:  # booking engines are often iframes on the hotel's site
-                if refused_host(frame.url):
-                    continue
+                if refused_host(frame.url) or frame.url.startswith("blob:") or urlsplit(frame.url).path.endswith(".svg"):
+                    continue  # consent pop-ups live in blob: frames; SVG icons are frames with no body
+                if deadline - time.monotonic() <= 0:
+                    break  # read what is in by the page timeout
                 try:
-                    lines += frame.inner_text("body").splitlines()  # innerText leaves out CSS-hidden text
+                    lines += (frame.evaluate(_BODY_TEXT) or "").splitlines()  # innerText leaves out CSS-hidden text
+                    lines += frame.eval_on_selector_all(_TEXT_INPUTS, _VISIBLE_INPUT_VALUES)
                 except self.error:
                     continue
             try:
-                lines += page.eval_on_selector_all(
-                    "input:not([type=hidden]):not([type=checkbox]):not([type=radio])", _VISIBLE_INPUT_VALUES)
                 links = page.eval_on_selector_all("a[href]", _LINKS)
             except self.error as error:
                 raise PageError(f"could not read the page: {_first_line(error)}") from None

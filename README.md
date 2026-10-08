@@ -101,6 +101,8 @@ python3 -m pip install --user playwright
 python3 -m playwright install --only-shell chromium
 ```
 
+Many booking engines open on an empty calendar. For the engines listed in `bin/engines.json` (Redforts, Octorate, Bookerclub), the reader opens the hotel's booking link with your dates already filled in. Some engines run on each hotel's own subdomain; you can list those in `data/engines.json`, in the same format, after checking that the dated link shows your dates and prices. Sites that refuse automated browsers (a 403 page, a CAPTCHA) are recorded as blocked and never worked around.
+
 The page timeout and the give-up time per engine are required arguments with no defaults (`--page-timeout-s`, `--give-up-after-s`). Run `python3 bin/engine_reader.py --help` for the full usage.
 
 ## Usage
