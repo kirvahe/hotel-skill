@@ -8,14 +8,18 @@
 #
 # Usage:
 #   chmod +x install.sh
-#   ./install.sh
+#   ./install.sh [--skill-dir DIR] [--data-dir DIR] [--non-interactive]
+#
+# --data-dir links the skill's data/ to a folder you keep elsewhere (for
+# example a synced folder). The folder must already exist. The installer
+# never deletes or replaces a real data/ folder; it stops and tells you how
+# to move it aside instead.
 
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET="${HOME}/.claude/skills/hotel"
-DATA="${TARGET}/data"
-CITIES="${DATA}/cities"
+DATA_DIR=""
 
 NON_INTERACTIVE=false
 UNINSTALL_HOOK=false
@@ -23,21 +27,35 @@ HOOK_SCRIPT_NAME="sync-hotel-skill.sh"
 HOOK_SCRIPT_DEST="${HOME}/.claude/scripts/${HOOK_SCRIPT_NAME}"
 SETTINGS_FILE="${HOME}/.claude/settings.json"
 
-# Parse args (lightweight — keeps existing zero-arg invocation working)
-for arg in "$@"; do
-  case "$arg" in
-    --non-interactive) NON_INTERACTIVE=true ;;
-    --uninstall-hook)  UNINSTALL_HOOK=true ;;
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+# Parse args (zero-arg invocation keeps working)
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --non-interactive) NON_INTERACTIVE=true; shift ;;
+    --uninstall-hook)  UNINSTALL_HOOK=true; shift ;;
+    --skill-dir)
+      [[ $# -ge 2 && -n "$2" ]] || die "--skill-dir requires a directory path"
+      TARGET="$2"; shift 2 ;;
+    --data-dir)
+      [[ $# -ge 2 && -n "$2" ]] || die "--data-dir requires a directory path"
+      DATA_DIR="$2"; shift 2 ;;
     --help)
-      echo "Usage: ./install.sh [--non-interactive] [--uninstall-hook] [--help]"
+      echo "Usage: ./install.sh [--skill-dir DIR] [--data-dir DIR] [--non-interactive] [--uninstall-hook] [--help]"
       echo ""
+      echo "  --skill-dir DIR     Install the skill here (default: ~/.claude/skills/hotel)"
+      echo "  --data-dir DIR      Link the skill's data/ to this existing folder"
       echo "  --non-interactive   Skip prompts (used by the auto-update sync script)"
       echo "  --uninstall-hook    Remove the SessionStart auto-update hook + sync script"
       echo "  --help              Show this help"
       exit 0
       ;;
+    *) die "unknown option: $1 (see --help)" ;;
   esac
 done
+
+DATA="${TARGET}/data"
+CITIES="${DATA}/cities"
 
 # Print the SessionStart hook JSON snippet for manual addition
 print_hook_snippet() {
@@ -152,12 +170,38 @@ if [ "${UNINSTALL_HOOK}" = true ]; then
   exit 0
 fi
 
+# 0. Check the data location before writing anything
+if [[ -n "${DATA_DIR}" ]]; then
+  [[ -d "${DATA_DIR}" ]] || die "data folder not found: ${DATA_DIR}
+       Create it or fix the path. Nothing was installed."
+  DATA_DIR="$(cd "${DATA_DIR}" && pwd)"
+  if [[ -d "${DATA}" && ! -L "${DATA}" ]]; then
+    die "${DATA} is a real folder, not a link. Nothing was changed.
+       Move it aside first, then re-run, for example:
+         mv \"${DATA}\" \"${DATA}.bak-$(date +%Y%m%d)\""
+  fi
+elif [[ -L "${DATA}" && ! -e "${DATA}" ]]; then
+  die "${DATA} links to a missing folder: $(readlink "${DATA}")
+       Restore that folder, or re-run with --data-dir pointing at your data."
+fi
+
 echo "==> Installing /hotel skill"
 echo "    source: ${SRC}"
 echo "    target: ${TARGET}"
 
-# 1. Create target directories
-mkdir -p "${TARGET}" "${DATA}" "${CITIES}"
+# 1. Create target directories and the data link
+mkdir -p "${TARGET}"
+if [[ -n "${DATA_DIR}" ]]; then
+  if [[ -L "${DATA}" ]]; then
+    echo "==> Re-pointing data/ (was: $(readlink "${DATA}"))"
+    rm "${DATA}"
+  fi
+  ln -s "${DATA_DIR}" "${DATA}"
+  echo "==> data/ → ${DATA_DIR}"
+else
+  mkdir -p "${DATA}"
+fi
+mkdir -p "${CITIES}"
 
 # 2. Copy skill code (always overwrite — these are the skill internals)
 copy_dir() {
@@ -180,8 +224,17 @@ copy_file() {
 copy_file "SKILL.md"
 copy_dir "workflows"
 copy_dir "references"
+copy_dir "bin"
 
-# 3. Personal data — only copy templates if user has no data yet
+# 3. Personal data — only seed templates into a folder that has no profile yet.
+#    A folder with a profile holds real data, so nothing is added to it.
+if [[ -f "${DATA}/taste-profile.md" ]]; then
+  echo "==> ${DATA} already holds a profile — no templates added (your data is safe)"
+  SEED_TEMPLATES=false
+else
+  SEED_TEMPLATES=true
+fi
+
 install_personal_file() {
     local template_src="$1"   # e.g. taste-profile-template.md
     local target_name="$2"    # e.g. taste-profile.md
@@ -198,23 +251,21 @@ install_personal_file() {
     fi
 }
 
-install_personal_file "taste-profile-template.md" "taste-profile.md"
-install_personal_file "booking-history-template.md" "booking-history.md"
+if [[ "${SEED_TEMPLATES}" == true ]]; then
+    install_personal_file "taste-profile-template.md" "taste-profile.md"
+    install_personal_file "booking-history-template.md" "booking-history.md"
 
-# Cities directory README (lightweight — never user-personal)
-if [[ -f "${SRC}/cities-template-README.md" ]]; then
-    if [[ ! -f "${CITIES}/README.md" ]]; then
+    # Cities directory README (lightweight — never user-personal)
+    if [[ -f "${SRC}/cities-template-README.md" && ! -f "${CITIES}/README.md" ]]; then
         echo "==> Seeding cities/README.md"
         cp "${SRC}/cities-template-README.md" "${CITIES}/README.md"
-    else
-        echo "==> cities/README.md already exists — skipping"
     fi
-fi
 
-# A cities-template.md sits at $DATA level for users to copy when adding a new city manually
-if [[ ! -f "${DATA}/cities-template.md" && -f "${SRC}/cities-template.md" ]]; then
-    echo "==> Seeding cities-template.md (reference for new city files)"
-    cp "${SRC}/cities-template.md" "${DATA}/cities-template.md"
+    # A cities-template.md sits at $DATA level for users to copy when adding a new city manually
+    if [[ ! -f "${DATA}/cities-template.md" && -f "${SRC}/cities-template.md" ]]; then
+        echo "==> Seeding cities-template.md (reference for new city files)"
+        cp "${SRC}/cities-template.md" "${DATA}/cities-template.md"
+    fi
 fi
 
 echo

@@ -36,6 +36,14 @@ Anyone who uses Claude Code and cares where they sleep. The skill is city-agnost
 git clone https://github.com/kirvahe/hotel-skill.git && cd hotel-skill && ./install.sh
 ```
 
+To keep your profile and history in another folder (for example a synced one), link it as the skill's data folder. The folder must already exist:
+
+```bash
+./install.sh --data-dir ~/path/to/hotel-data
+```
+
+`--skill-dir DIR` installs somewhere other than `~/.claude/skills/hotel`. The installer never deletes or replaces a real `data/` folder: if one is in the way, it stops and tells you how to move it aside.
+
 Or manually:
 
 ```bash

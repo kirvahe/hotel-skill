@@ -21,3 +21,7 @@ Thumbs.db
 
 # Plans name personal trips and data; keep them out of the public repo
 docs/plans/
+
+# Personal data written by runs
+trips/
+feedback/
