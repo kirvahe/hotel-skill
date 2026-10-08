@@ -88,6 +88,21 @@ Onboarding is currently manual via the template; a guided flow is on the v1.3 ro
 - **Claude Code** with skill support
 - **Web search MCP** (Exa, Firecrawl, or equivalent) — strongly recommended. The skill auto-detects available search tools. Without web search, it falls back to your booking history and saved profile only.
 
+## Background browser (optional)
+
+`bin/engine_reader.py` checks a hotel's own website and booking engine for your dates in a browser with no visible window. It reads what the page shows and records one of three outcomes: available (with the price in EUR), no rooms, or unknown. It records the dates the page actually shows, so a price for other dates never counts as a price for yours.
+
+It never signs in, never fills in or submits a form, and never books or pays: it stops before any personal-data or payment step. It never opens Booking or Airbnb, whether as the start address, a link on the hotel's site or a redirect. You check those yourself through the dated links the skill gives you.
+
+The reader needs Playwright for Python and its headless Chromium. Without them the skill still runs and says the availability check was skipped. To install them:
+
+```bash
+python3 -m pip install --user playwright
+python3 -m playwright install --only-shell chromium
+```
+
+The page timeout and the give-up time per engine are required arguments with no defaults (`--page-timeout-s`, `--give-up-after-s`). Run `python3 bin/engine_reader.py --help` for the full usage.
+
 ## Usage
 
 **Find a hotel:**
