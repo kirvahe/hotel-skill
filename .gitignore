@@ -18,3 +18,6 @@ Thumbs.db
 # Backups
 *.bak
 *~
+
+# Plans name personal trips and data; keep them out of the public repo
+docs/plans/
