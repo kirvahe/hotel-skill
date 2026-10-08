@@ -19,6 +19,8 @@ Usage:
 --url may hold {check_in}, {check_out} and {guests} placeholders, which take the trip values;
 a date placeholder accepts a strftime format, e.g. {check_in:%d/%m/%Y}. That is how a caller
 sets the dates on an engine that takes them in its URL.
+Known engines (bin/engines.json) need no placeholders: when the start URL or the hotel's booking
+link is on a known engine's host, the reader opens it with the trip dates filled in.
 --page-timeout-s   the longest wait for one page to load and settle.
 --give-up-after-s  the per-engine give-up rule: total time for every page of one read (redirect
                    checks, the hotel's site, its booking link). When it runs out the reader
@@ -62,12 +64,13 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from ledger import ENGINE_KINDS, validate_evidence  # noqa: E402
 
 EXIT_OK, EXIT_INVALID, EXIT_USAGE, EXIT_REFUSED, EXIT_SKIPPED = 0, 1, 2, 3, 4
+ENGINES_FILE = Path(__file__).resolve().parent / "engines.json"
 SKIP_MESSAGE = "SKIPPED: background browser not installed"
 NO_TEXT = "[no page text]"
 
@@ -412,19 +415,56 @@ def booking_link(page: Page) -> tuple:
     return None, refused
 
 
+# ---------------------------------------------------------------- known engines
+
+def load_engines(path: Path = ENGINES_FILE) -> list:
+    """The known-engine table; empty when the file is missing."""
+    if not path.is_file():
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))["engines"]
+
+
+def _fill(template: str, trip: Trip) -> str:
+    return template.format(check_in=trip.check_in, check_out=trip.check_out, guests=trip.guests)
+
+
+def dated_url(url: str, trip: Trip, engines: list) -> str | None:
+    """The URL with the trip dates set, when it is on a known engine's host; else None.
+
+    Other query parameters (a property key, a language) stay; old dates are replaced. An engine
+    whose URL cannot set the guests is used only for a trip with its default number of guests.
+    """
+    parts = urlsplit(url)
+    host = (parts.hostname or "").rstrip(".")
+    engine = next((e for e in engines if host in e["hosts"]), None)
+    if engine is None:
+        return None
+    guests_param = engine.get("guests_param")
+    if guests_param is None and trip.guests != engine.get("default_guests"):
+        return None
+    replaced = set(engine["params"]) | ({guests_param} if guests_param else set())
+    query = [(key, value) for key, value in parse_qsl(parts.query, keep_blank_values=True) if key not in replaced]
+    query += [(key, _fill(value, trip)) for key, value in engine["params"].items()]
+    if guests_param:
+        query.append((guests_param, str(trip.guests)))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query, safe="/"), ""))
+
+
 # ---------------------------------------------------------------- one engine read
 
 def read_engine(candidate: str, url: str, trip: Trip, fetch, *, page_timeout_s: float,
-                give_up_after_s: float, clock=time.monotonic) -> tuple:
+                give_up_after_s: float, clock=time.monotonic, engines: list | None = None) -> tuple:
     """(evidence record, refused under R21). fetch(url, timeout_s) returns a Page.
 
     Loads the start URL; when it gives no engine evidence, follows its first booking link that
-    is not Booking or Airbnb, once. Every load counts against the give-up rule.
+    is not Booking or Airbnb, once. A URL on a known engine opens with the trip dates set.
+    Every load counts against the give-up rule.
     """
     if refused_host(url):
         return refusal(candidate, url, url, NO_TEXT), True
+    engines = load_engines() if engines is None else engines
     deadline = clock() + give_up_after_s
-    target = url
+    target = dated_url(url, trip, engines) or url
 
     def load(target_url: str) -> Page:
         remaining = deadline - clock()
@@ -443,7 +483,7 @@ def read_engine(candidate: str, url: str, trip: Trip, fetch, *, page_timeout_s: 
             return refusal(candidate, page.url, href, text), True
         if link is None:
             return record, False
-        target = link
+        target = dated_url(link, trip, engines) or link
         return classify(candidate, load(target), trip), False
     except Refused as error:
         return refusal(candidate, target, error.url, NO_TEXT), True

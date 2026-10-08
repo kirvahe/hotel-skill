@@ -1,0 +1,14 @@
+{
+  "about": "Booking engines whose search page takes the dates in its URL. The reader opens a link to one of these hosts with the trip dates filled in. Add an engine only after a live check showed the trip dates and prices on the dated URL; params values use {check_in}, {check_out} and {guests}, with an optional strftime format such as {check_in:%d/%m/%Y}. guests_param null means the URL cannot set the guests, so the entry is used only when the trip has default_guests.",
+  "engines": [
+    {
+      "name": "Redforts",
+      "hosts": ["booking.redforts.com"],
+      "params": {"arrival": "{check_in}", "departure": "{check_out}"},
+      "guests_param": null,
+      "default_guests": 2,
+      "verified": "2026-10-08",
+      "note": "Guests are chosen per room on the page; it lists rates for 2 adults."
+    }
+  ]
+}

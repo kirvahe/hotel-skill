@@ -202,6 +202,65 @@ class OfficialSiteTest(unittest.TestCase):
                 self.assertFalse(out.exists())
 
 
+KNOWN = [
+    {"name": "Motor Conocido", "hosts": ["motor-conocido.example"],
+     "params": {"arrival": "{check_in}", "departure": "{check_out}"},
+     "guests_param": None, "default_guests": 2, "verified": "2026-10-08"},
+    {"name": "Motor Con Clave", "hosts": ["reservas.clave-demo.example"],
+     "params": {"from": "{check_in:%d/%m/%Y}", "to": "{check_out:%d/%m/%Y}"},
+     "guests_param": "adults", "default_guests": None, "verified": "2026-10-08"},
+]
+DATED = "https://motor-conocido.example/AbC9/?arrival=2026-11-20&departure=2026-11-22"
+
+
+class KnownEngineTest(unittest.TestCase):
+    def test_known_engine_link_gets_the_trip_dates(self):
+        self.assertEqual(reader.dated_url("https://motor-conocido.example/AbC9/", TRIP, KNOWN), DATED)
+
+    def test_other_parameters_stay_and_old_dates_are_replaced(self):
+        url = "https://reservas.clave-demo.example/index?siteKey=x1&from=01/01/2026&adults=1&lang=es"
+        self.assertEqual(reader.dated_url(url, TRIP, KNOWN),
+                         "https://reservas.clave-demo.example/index?siteKey=x1&lang=es"
+                         "&from=20/11/2026&to=22/11/2026&adults=2")
+
+    def test_unknown_engine_is_left_alone(self):
+        self.assertIsNone(reader.dated_url("https://reservas.motor-demo.example/casa-aljibe", TRIP, KNOWN))
+
+    def test_engine_without_a_guests_parameter_is_used_only_for_its_default_guests(self):
+        three = reader.Trip(TRIP.check_in, TRIP.check_out, 3)
+        self.assertIsNone(reader.dated_url("https://motor-conocido.example/AbC9/", three, KNOWN))
+
+    def test_site_link_to_a_known_engine_is_opened_with_the_dates(self):
+        fetch = SavedPages({SITE: "site-known-engine.html", DATED: "priced-es.html"})
+        record, refused = reader.read_engine("Casa del Aljibe Inventada", SITE, TRIP, fetch,
+                                             page_timeout_s=10, give_up_after_s=20, engines=KNOWN)
+        self.assertFalse(refused)
+        self.assertEqual(fetch.requested, [SITE, DATED])
+        self.assertEqual((record["kind"], record["source_url"]), ("engine_price", DATED))
+
+    def test_start_url_on_a_known_engine_is_opened_with_the_dates(self):
+        fetch = SavedPages({DATED: "priced-es.html"})
+        record, _ = reader.read_engine("Casa del Aljibe Inventada", "https://motor-conocido.example/AbC9/", TRIP,
+                                       fetch, page_timeout_s=10, give_up_after_s=20, engines=KNOWN)
+        self.assertEqual(fetch.requested, [DATED])
+        self.assertEqual(record["kind"], "engine_price")
+
+    def test_shipped_engine_table_is_well_formed(self):
+        table = reader.load_engines()
+        self.assertTrue(table)
+        for engine in table:
+            with self.subTest(engine.get("name")):
+                self.assertEqual(set(engine) - {"note"},
+                                 {"name", "hosts", "params", "guests_param", "default_guests", "verified"})
+                self.assertTrue(engine["hosts"])
+                date.fromisoformat(engine["verified"])
+                url = f"https://{engine['hosts'][0]}/x/"
+                guests = engine["default_guests"] or 2
+                dated = reader.dated_url(url, reader.Trip(TRIP.check_in, TRIP.check_out, guests), table)
+                self.assertTrue(dated and dated.startswith(url + "?"), dated)
+                self.assertNotIn("{", dated)
+
+
 class MissingPlaywrightTest(unittest.TestCase):
     def test_missing_playwright_exits_with_the_skip_signal(self):
         with tempfile.TemporaryDirectory() as tmp:
