@@ -145,6 +145,20 @@ class RenderTest(unittest.TestCase):
         self.assertIn("❓", block(text, "Palacio Ñandú"))
         self.assertNotIn("Casa Velarta", entries(text))
 
+    def test_price_of_unclear_basis_is_marked_and_judged_as_a_stay_total_at_most(self):
+        # 300 might be the 2-night total (150 a night) or the nightly price: the hotel stays in for
+        # the user to check, marked as unclear, rather than being dropped as over budget.
+        evidence = read_jsonl(self.run / "evidence.jsonl")
+        for record in evidence:
+            if record["candidate"] == "Casa Velarta" and record["kind"] == "engine_price":
+                record.update(price_eur=300, price_basis="unknown")
+        write_jsonl(self.run / "evidence.jsonl", evidence)
+        self.ready()
+        text = render.render_shortlist(self.run, "en")
+        self.assertIn("Casa Velarta", sections(text)[EN["hotels"]])
+        self.assertIn(EN["price_unclear"].format(price="€300"), block(text, "Casa Velarta"))
+        self.assertNotIn(EN["per_night"].format(price="€300"), text)
+
     # R19 and AE7
     def test_special_format_is_in_the_airbnb_block_with_a_dated_link(self):
         self.ready()

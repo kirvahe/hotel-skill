@@ -38,6 +38,12 @@ class DecideTest(unittest.TestCase):
         ], TRIP)
         self.assertEqual((result["status"], result["price_eur"]), ("available", 160))
 
+    def test_price_basis_is_carried_and_a_record_without_one_is_per_night(self):
+        result = status_table.decide([ev("engine_price", dates_shown=MATCH, price_eur=351, price_basis="unknown")], TRIP)
+        self.assertEqual((result["price_eur"], result["price_basis"]), (351, "unknown"))
+        result = status_table.decide([ev("engine_price", dates_shown=MATCH, price_eur=160)], TRIP)
+        self.assertEqual(result["price_basis"], "per_night")
+
     def test_booking_no_rooms_alone_is_not_evidence(self):
         result = status_table.decide([ev("engine_no_rooms", url="https://www.booking.com/hotel/tg/x.html",
                                          dates_shown=MATCH)], TRIP)

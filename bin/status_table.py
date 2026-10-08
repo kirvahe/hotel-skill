@@ -23,7 +23,9 @@ The decision table, for the nights [check_in, check_out):
     anything else (no evidence, unreadable engine,
     a closure without dates, other dates shown)         -> unknown
 
-price_eur is the engine's per-night price; the budget split against it happens in render.py.
+price_eur is the engine's price with its price_basis: "per_night", or "unknown" when the page
+did not say whether it is per night or for the whole stay (a record without a basis is per night).
+The budget split against it happens in render.py.
 A "scarcity" record whose dates_shown equal the trip dates is attached as a quote.
 
 Prints counts, rejected lines and unmatched evidence names as JSON.
@@ -71,7 +73,7 @@ def closure_overlaps(record: dict, check_in: str, check_out: str):
 
 def decide(evidence: list, trip: dict) -> dict:
     check_in, check_out = trip["check_in"], trip["check_out"]
-    result = {"status": "unknown", "price_eur": None, "reason": "no_evidence",
+    result = {"status": "unknown", "price_eur": None, "price_basis": None, "reason": "no_evidence",
               "quote": "", "source_url": "", "scarcity": None}
     result["scarcity"] = next((e.get("quote") for e in evidence
                                if e["kind"] == "scarcity" and _dates_match(e, check_in, check_out)), None)
@@ -90,7 +92,8 @@ def decide(evidence: list, trip: dict) -> dict:
     elif overlapping:
         result.update(status="unavailable", reason="closure", **cite(overlapping[0]))
     elif latest and latest["kind"] == "engine_price":
-        result.update(status="available", reason="engine_price", price_eur=latest["price_eur"], **cite(latest))
+        result.update(status="available", reason="engine_price", price_eur=latest["price_eur"],
+                      price_basis=latest.get("price_basis", "per_night"), **cite(latest))
     elif latest:
         result.update(status="unavailable", reason="engine_no_rooms", **cite(latest))
     elif engine:

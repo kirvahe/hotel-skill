@@ -97,6 +97,18 @@ class FixtureModeTest(unittest.TestCase):
         self.assertEqual(record["dates_shown"]["check_in"], "2026-11-21")
         self.assertEqual(record["dates_shown"]["check_out"], "2026-11-23")
 
+    def test_engine_page_with_a_legend_other_sites_and_a_longer_stay_offer(self):
+        # Laid out like a real engine from the live smoke: the calendar legend "× = No availability"
+        # is not about the dates, Booking.com and Expedia prices are not the hotel's, and the
+        # 6-night offer is for other dates. The price is the per-night line for the trip's 2 nights.
+        record = self.read("stay-offers-en.html")
+        self.assertEqual(record["kind"], "engine_price")
+        self.assertEqual(record["price_eur"], 175.5)
+        self.assertEqual(record["price_basis"], "per_night")
+        self.assertEqual(record["quote"], "175.50 € × 2 nights")
+        self.assertEqual((record["dates_shown"]["check_in"], record["dates_shown"]["check_out"]),
+                         ("2026-11-20", "2026-11-22"))
+
 
 class BookingAndAirbnbRefusalTest(unittest.TestCase):
     def test_booking_url_is_refused_with_its_own_exit_code(self):
@@ -245,6 +257,47 @@ class PatternTableTest(unittest.TestCase):
     def test_price_and_no_availability_on_one_page_is_unknown(self):
         record = self.classify(self.DATES, "No hay disponibilidad", "Fechas alternativas desde 140 €")
         self.assertEqual(record["kind"], "engine_unreadable")
+
+    def test_calendar_legend_is_not_a_no_rooms_statement(self):
+        for legend in ("× = No availability", "x = No hay disponibilidad", "■ = Nessuna disponibilità"):
+            with self.subTest(legend):
+                record = self.classify(self.DATES, legend, "Doble 140 €")
+                self.assertEqual(record["kind"], "engine_price")
+
+    def test_per_night_lines_in_four_languages(self):
+        cases = ["175,50 € x 2 noches", "175,50 € × 2 notti", "175,50 € × 2 nuits", "175.50 € × 2 nights",
+                 "175,50 € por noche", "175,50 €/noche", "€ 175,50 a notte", "175,50 € par nuit",
+                 "EUR 175.50 per night", "175.50 €/night"]
+        for line in cases:
+            with self.subTest(line):
+                record = self.classify(self.DATES, "351,00 €", line)
+                self.assertEqual((record["price_eur"], record["price_basis"]), (175.5, "per_night"))
+                self.assertEqual(record["quote"], line)
+
+    def test_per_night_lines_for_another_stay_length_are_ignored(self):
+        record = self.classify(self.DATES, "149.18 € × 6 nights", "175.50 € × 2 nights")
+        self.assertEqual((record["price_eur"], record["price_basis"]), (175.5, "per_night"))
+
+    def test_total_for_the_trip_nights_gives_the_per_night_price(self):
+        for line in ("Total for 2 nights: €351.00", "Total: 351,00 €", "351,00 € para 2 noches", "Totale 351,00 €"):
+            with self.subTest(line):
+                record = self.classify(self.DATES, line)
+                self.assertEqual((record["price_eur"], record["price_basis"]), (175.5, "per_night"))
+                self.assertEqual(record["quote"], line)
+
+    def test_total_for_another_stay_length_is_ignored(self):
+        record = self.classify(self.DATES, "Total for 6 nights: €895.08", "Doble 160 €")
+        self.assertEqual((record["price_eur"], record["price_basis"]), (160.0, "unknown"))
+
+    def test_a_price_without_per_night_or_total_wording_has_an_unknown_basis(self):
+        record = self.classify(self.DATES, "Doble 160 €")
+        self.assertEqual((record["price_eur"], record["price_basis"]), (160.0, "unknown"))
+
+    def test_other_sites_prices_are_not_the_hotels(self):
+        record = self.classify(self.DATES, "Doble 160 €", "Booking.com:", "150 €", "Expedia: 140 €",
+                               "Precio en Hotels.com 145 €")
+        self.assertEqual(record["price_eur"], 160.0)
+        self.assertEqual(record["quote"], "Doble 160 €")
 
     def test_price_without_dates_is_unknown(self):
         record = self.classify("Doble 140 €")

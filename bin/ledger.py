@@ -34,6 +34,7 @@ KINDS = ("hotel", "special-format", "apartment", "bnb", "hostal", "guesthouse")
 STAGES = ("intake", "context", "research", "filter", "availability", "shortlist", "final", "answer", "done")
 EVIDENCE_KINDS = ("engine_price", "engine_no_rooms", "engine_unreadable", "closure", "pet_policy", "scarcity")
 ENGINE_KINDS = ("engine_price", "engine_no_rooms")
+PRICE_BASES = ("per_night", "unknown")
 BANNED_DOMAINS = ("tripadvisor.", "yelp.", "instagram.com")
 REDDIT_PERMALINK = re.compile(r"reddit\.com/r/[^/]+/comments/[^/]+")
 CYRILLIC = {
@@ -111,6 +112,8 @@ def validate_evidence(record: dict) -> list[str]:
             errors.append("engine evidence needs dates_shown.check_in and dates_shown.check_out")
     if record.get("kind") == "engine_price" and not isinstance(record.get("price_eur"), (int, float)):
         errors.append("engine_price needs a numeric price_eur")
+    if "price_basis" in record and record["price_basis"] not in PRICE_BASES:
+        errors.append(f"price_basis must be one of {', '.join(PRICE_BASES)}")
     return errors
 
 

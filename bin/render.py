@@ -33,6 +33,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 import links
@@ -52,6 +53,7 @@ LABELS = {
         "skipped_line": "Skipped: {reason} — {name} — {detail}",
         "price": "€{amount}",
         "per_night": "{price}/night",
+        "price_unclear": "{price} — per night or for the whole stay ❓",
         "availability_unknown": "❓ availability not confirmed",
         "flag_booking_only": "Booking only, unconfirmed",
         "flag_score_unverified": "score unverified ❓",
@@ -92,6 +94,7 @@ LABELS = {
         "skipped_line": "Отсеяно: {reason} — {name} — {detail}",
         "price": "{amount} €",
         "per_night": "{price} за ночь",
+        "price_unclear": "{price} — за ночь или за весь срок ❓",
         "availability_unknown": "❓ нет данных о свободных номерах",
         "flag_booking_only": "только Booking, без подтверждения",
         "flag_score_unverified": "оценка на Booking не подтверждена ❓",
@@ -150,6 +153,7 @@ def build_view(run_dir: Path) -> dict:
     struck = runfiles.active_strikes(runfiles.read_checkpoints(run_dir))
     fit_by_id = {c["id"]: c for c in fit["candidates"]}
     budget = trip["budget"]["max"]
+    nights = (date.fromisoformat(trip["check_out"]) - date.fromisoformat(trip["check_in"])).days
 
     hotels, beyond, airbnb, removed = [], [], [], []
     for candidate in merged:
@@ -170,7 +174,7 @@ def build_view(run_dir: Path) -> dict:
         price = state.get("price_eur") if state["status"] == "available" else None
         entry = {
             "id": cid, "name": name, "area": candidate.get("area", ""), "block": verdict["block"],
-            "price": price, "flags": [f for f in FLAG_ORDER if f in verdict["flags"]],
+            "price": price, "price_basis": state.get("price_basis") or "per_night", "flags": [f for f in FLAG_ORDER if f in verdict["flags"]],
             "past_stays": verdict.get("past_stays", []), "scarcity": state.get("scarcity"), "why": "",
             "links": links.candidate_links(candidate, trip),
         }
@@ -182,7 +186,9 @@ def build_view(run_dir: Path) -> dict:
         if state["status"] == "unavailable":
             removed.append({"code": "unavailable", "name": name, "detail": state.get("quote", "")})
             continue
-        if price is not None and price > budget:
+        # An unclear price may be the stay total: judge it by the lowest nightly price it allows.
+        nightly = price / nights if price is not None and entry["price_basis"] == "unknown" else price
+        if nightly is not None and nightly > budget:
             reason = next((v.get("reason", "") for v in verdicts.get("clearly_better", [])
                            if runfiles.name_key(v.get("candidate", "")) in runfiles.record_keys(candidate)), None)
             if reason is None:
@@ -221,7 +227,8 @@ def _status_text(entry: dict, labels: dict) -> str:
     if entry["block"] == "airbnb":
         return labels["dates_not_verified"]
     if entry["price"] is not None:
-        return labels["per_night"].format(price=money(entry["price"], labels))
+        key = "price_unclear" if entry["price_basis"] == "unknown" else "per_night"
+        return labels[key].format(price=money(entry["price"], labels))
     return labels["availability_unknown"]
 
 

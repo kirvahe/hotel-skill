@@ -50,6 +50,19 @@ class CandidateValidationTest(unittest.TestCase):
             self.assertNotIn("line 1", result.stdout)
 
 
+class EvidenceValidationTest(unittest.TestCase):
+    RECORD = {"candidate": "Hotel Test", "kind": "engine_price", "source_url": "https://hotel.example/book",
+              "quote": "175.50 € × 2 nights", "read_at": "2026-10-08T10:00:00+00:00", "price_eur": 175.5,
+              "dates_shown": {"check_in": "2026-11-20", "check_out": "2026-11-22"}}
+
+    def test_price_basis_is_optional_and_checked_when_present(self):
+        self.assertEqual(ledger.validate_evidence(self.RECORD), [])
+        for basis in ("per_night", "unknown"):
+            self.assertEqual(ledger.validate_evidence(dict(self.RECORD, price_basis=basis)), [])
+        errors = ledger.validate_evidence(dict(self.RECORD, price_basis="total"))
+        self.assertTrue(any("price_basis" in e for e in errors), errors)
+
+
 class SlugTest(unittest.TestCase):
     def test_cyrillic_and_latin_names_share_a_slug(self):
         self.assertEqual(ledger.city_slug("Гранада"), "granada")

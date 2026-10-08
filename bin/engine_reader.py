@@ -28,9 +28,18 @@ Both limits are required and have no defaults: the user approves the values afte
 no request.
 
 What a page yields (phrases in the PATTERNS table below):
-    a price in EUR and dates shown              -> engine_price, at the lowest room price
+    a price in EUR and dates shown              -> engine_price (see "The price" below)
     a no-availability statement and dates shown -> engine_no_rooms
     both on one page, either without readable dates, or neither -> engine_unreadable
+A calendar legend such as "× = No availability" is not a no-availability statement.
+
+The price. price_eur is per night when price_basis is "per_night": the lowest of the lines that
+say per night ("175 € × 2 nights" for the trip's number of nights, "160 € per night") or give a
+total for the trip's nights ("Total for 2 nights: 351 €", "Total: 351 €"), the total divided by
+the nights. Lines for another number of nights (a longer-stay offer), tax and savings lines and
+other sites' prices ("Booking.com: 428 €", or the label on the line before the amount) never
+count. When no line says per night or total, price_eur is the lowest amount left and price_basis
+is "unknown": it may be the price per night or for the whole stay.
 When the start page gives no engine evidence, the reader follows the first booking link on it
 that is not Booking or Airbnb, once, and that page decides.
 
@@ -79,6 +88,27 @@ PATTERNS = {
         "en": [r"no availability", r"no rooms? (?:are |is )?available", r"fully booked",
                r"not available (?:for|on) (?:the|your|these|those) (?:selected )?dates"],
     },
+    # Per-night wording next to an amount, without a number of nights.
+    "per_night": {
+        "es": [r"(?:\bpor|/)\s?noche\b"],
+        "it": [r"(?:\ba|\bper|/)\s?notte\b"],
+        "fr": [r"(?:\bpar|/)\s?nuit\b"],
+        "en": [r"(?:\bper|\ba|/)\s?night\b"],
+    },
+    # The word for night(s), after a number: "x 2 nights" is per night, "2 nights" alone a total.
+    "nights": {
+        "es": [r"noches?"],
+        "it": [r"notti", r"notte"],
+        "fr": [r"nuits?"],
+        "en": [r"nights?"],
+    },
+    # A total, which without a number of nights is for the dates searched.
+    "total": {
+        "es": [r"\btotal\b"],
+        "it": [r"\btotale\b"],
+        "fr": [r"\btotal\b"],
+        "en": [r"\btotal\b"],
+    },
     # Lines whose EUR amount is not a room price: tourist taxes and savings.
     "not_a_room_price": {
         "es": [r"tasa turistica", r"impuesto turistico", r"\bahorra"],
@@ -124,6 +154,16 @@ def _compile(group: str) -> list:
 NO_ROOMS = _compile("no_rooms")
 NOT_A_ROOM_PRICE = _compile("not_a_room_price")
 BOOKING_LINK = _compile("booking_link")
+PER_NIGHT = _compile("per_night")
+TOTAL = _compile("total")
+NIGHTS_WORD = "(?:" + "|".join(p for patterns in PATTERNS["nights"].values() for p in patterns) + r")\b"
+# "× 2 nights": the amount before the sign is per night. A letter x counts only on its own ("max 2").
+TIMES_NIGHTS = re.compile(r"(?<![a-z])[×x*]\s?(\d{1,2})\s?" + NIGHTS_WORD)
+N_NIGHTS = re.compile(r"\b(\d{1,2})\s?" + NIGHTS_WORD)
+# Calendar legends: one or two symbols, then "=" and the meaning ("× = No availability").
+LEGEND = re.compile(r"^\s*\S{1,2}\s*=\s*")
+# Other sites' prices, shown by some engines to prove theirs is lower. Folded, like the patterns.
+OTHER_SITES = re.compile(r"\b(?:booking\.com|expedia|hotels\.com|agoda|trivago|kayak|priceline|trip\.com)\b")
 MONTH_NUMBER = {name: number for number, names in MONTHS.items() for name in names}
 
 
@@ -220,23 +260,62 @@ def parse_amount(text: str) -> float:
     return float(text)
 
 
-def lowest_price(lines: list) -> tuple | None:
-    """(amount, line) for the lowest non-zero EUR amount outside tax and savings lines.
+def _amounts(folded: str) -> list:
+    """(amount, end position) of every non-zero EUR amount on a folded line."""
+    found = []
+    for pattern in PRICES:
+        for match in pattern.finditer(folded):
+            amount = parse_amount(match.group(1))
+            if amount > 0:
+                found.append((amount, match.end()))
+    return found
+
+
+def _line_price(folded: str, nights: int) -> tuple | None:
+    """(per-night amount, "per_night") or (amount, "unknown") for one line, or None when it does not count."""
+    amounts = _amounts(folded)
+    if not amounts:
+        return None
+    times = TIMES_NIGHTS.search(folded)
+    if times:
+        if int(times[1]) != nights:
+            return None  # an offer for another number of nights
+        before = [amount for amount, end in amounts if end <= times.start()]
+        return (before[-1] if before else min(a for a, _ in amounts)), "per_night"
+    lowest = min(amount for amount, _ in amounts)
+    if any(p.search(folded) for p in PER_NIGHT):
+        return lowest, "per_night"
+    count = N_NIGHTS.search(folded)
+    if count:
+        return (lowest / nights, "per_night") if int(count[1]) == nights else None
+    if any(p.search(folded) for p in TOTAL):
+        return lowest / nights, "per_night"
+    return lowest, "unknown"
+
+
+def room_price(lines: list, trip: Trip) -> tuple | None:
+    """(amount, line, price_basis): the lowest per-night price, else the lowest amount of unknown basis.
 
     Lowest, because understating a price keeps a hotel in the budget for the user to check,
     while overstating it would push the hotel out to the beyond-budget group (R25).
     """
-    best = None
+    nights = (trip.check_out - trip.check_in).days
+    best = {"per_night": None, "unknown": None}
+    after_other_site = False
     for line in lines:
         folded = fold(line)
-        if any(p.search(folded) for p in NOT_A_ROOM_PRICE):
+        label_only = bool(OTHER_SITES.search(folded)) and not _amounts(folded)
+        skip = after_other_site or OTHER_SITES.search(folded) or any(p.search(folded) for p in NOT_A_ROOM_PRICE)
+        after_other_site = label_only
+        if skip:
             continue
-        for pattern in PRICES:
-            for match in pattern.finditer(folded):
-                amount = parse_amount(match.group(1))
-                if amount > 0 and (best is None or amount < best[0]):
-                    best = (amount, line)
-    return best
+        found = _line_price(folded, nights)
+        if found and (best[found[1]] is None or found[0] < best[found[1]][0]):
+            best[found[1]] = (found[0], line)
+    for basis in ("per_night", "unknown"):
+        if best[basis]:
+            return round(best[basis][0], 2), best[basis][1], basis
+    return None
 
 
 def _date(year: int, month: int, day: int) -> date | None:
@@ -298,14 +377,16 @@ def dates_shown(lines: list, trip: Trip) -> dict | None:
 
 def classify(candidate: str, page: Page, trip: Trip) -> dict:
     """One evidence record for one page. A page that cannot settle the question is unreadable (R12)."""
-    price = lowest_price(page.lines)
-    no_rooms = next((line for line in page.lines if any(p.search(fold(line)) for p in NO_ROOMS)), None)
+    price = room_price(page.lines, trip)
+    no_rooms = next((line for line in page.lines
+                     if not LEGEND.match(line) and any(p.search(fold(line)) for p in NO_ROOMS)), None)
     if price and no_rooms:
         return unreadable(candidate, page.url, f"{price[1]} / {no_rooms}",
                           "the page shows both a price and a no-availability statement")
     shown = dates_shown(page.lines, trip)
     if price and shown:
-        return evidence(candidate, "engine_price", page.url, price[1], price_eur=round(price[0], 2), dates_shown=shown)
+        return evidence(candidate, "engine_price", page.url, price[1], price_eur=price[0], price_basis=price[2],
+                        dates_shown=shown)
     if no_rooms and shown:
         return evidence(candidate, "engine_no_rooms", page.url, no_rooms, dates_shown=shown)
     if price or no_rooms:
