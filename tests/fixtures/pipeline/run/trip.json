@@ -1,0 +1,10 @@
+{
+  "city": "Testgrad",
+  "city_slug": "testgrad",
+  "check_in": "2026-11-20",
+  "check_out": "2026-11-22",
+  "guests": 2,
+  "budget": {"min": 0, "max": 200, "currency": "EUR"},
+  "dog": false,
+  "created": "2026-10-08T09:00:00+00:00"
+}
