@@ -1,0 +1,103 @@
+{
+  "request": {"path": "comments/tree", "params": {"link_id": "tg0001", "limit": 9999}},
+  "response": {
+    "data": [
+      {
+        "kind": "t1",
+        "data": {
+          "id": "tc0001", "name": "t1_tc0001", "parent_id": "t3_tg0001", "link_id": "t3_tg0001",
+          "subreddit": "primeriatravel", "author": "synthetic_author_a", "is_submitter": false,
+          "score": 42, "created_utc": 1770721500,
+          "body": "Hotel Alpha in the Old Town. Quiet, dog friendly, 18 rooms.",
+          "permalink": "/r/primeriatravel/comments/tg0001/hotel_recommendations_for_testgrad/tc0001/",
+          "_meta": {},
+          "replies": {
+            "kind": "Listing",
+            "data": {
+              "children": [
+                {
+                  "kind": "t1",
+                  "data": {
+                    "id": "tc0002", "name": "t1_tc0002", "parent_id": "t1_tc0001", "link_id": "t3_tg0001",
+                    "subreddit": "primeriatravel", "author": "synthetic_op", "is_submitter": true,
+                    "score": 7, "created_utc": 1770727200,
+                    "body": "Thanks u/synthetic_author_a, booked it for March!",
+                    "permalink": "/r/primeriatravel/comments/tg0001/hotel_recommendations_for_testgrad/tc0002/",
+                    "_meta": {},
+                    "replies": {
+                      "kind": "Listing",
+                      "data": {
+                        "children": [
+                          {
+                            "kind": "t1",
+                            "data": {
+                              "id": "tc0003", "name": "t1_tc0003", "parent_id": "t1_tc0002", "link_id": "t3_tg0001",
+                              "subreddit": "primeriatravel", "author": "synthetic_author_b", "is_submitter": false,
+                              "score": 1, "created_utc": 1770794400,
+                              "body": "How was the breakfast there?",
+                              "permalink": "/r/primeriatravel/comments/tg0001/hotel_recommendations_for_testgrad/tc0003/",
+                              "_meta": {},
+                              "replies": ""
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  }
+                },
+                {
+                  "kind": "t1",
+                  "data": {
+                    "id": "tc0005", "name": "t1_tc0005", "parent_id": "t1_tc0001", "link_id": "t3_tg0001",
+                    "subreddit": "primeriatravel", "author": "[deleted]", "is_submitter": false,
+                    "score": 2, "created_utc": 1770728400,
+                    "body": "[deleted]",
+                    "permalink": "/r/primeriatravel/comments/tg0001/hotel_recommendations_for_testgrad/tc0005/",
+                    "_meta": {},
+                    "replies": ""
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      {
+        "kind": "t1",
+        "data": {
+          "id": "tc0004", "name": "t1_tc0004", "parent_id": "t3_tg0001", "link_id": "t3_tg0001",
+          "subreddit": "primeriatravel", "author": "synthetic_author_c", "is_submitter": false,
+          "score": 15, "created_utc": 1770728400,
+          "body": "Casa Beta is cheaper, but the street is loud at night.",
+          "permalink": "/r/primeriatravel/comments/tg0001/hotel_recommendations_for_testgrad/tc0004/",
+          "_meta": {},
+          "replies": ""
+        }
+      },
+      {
+        "kind": "t1",
+        "data": {
+          "id": "tc0006", "name": "t1_tc0006", "parent_id": "t3_tg0001", "link_id": "t3_tg0001",
+          "subreddit": "primeriatravel", "author": "AutoModerator", "is_submitter": false,
+          "score": 1, "created_utc": 1770717660,
+          "body": "Please read the sub wiki before posting.",
+          "permalink": "/r/primeriatravel/comments/tg0001/hotel_recommendations_for_testgrad/tc0006/",
+          "_meta": {},
+          "replies": ""
+        }
+      },
+      {
+        "kind": "t1",
+        "data": {
+          "id": "tc0007", "name": "t1_tc0007", "parent_id": "t3_tg0001", "link_id": "t3_tg0001",
+          "subreddit": "primeriatravel", "author": "synthetic_author_d", "is_submitter": false,
+          "score": -3, "created_utc": 1770934200,
+          "body": "Skip Testgrad, stay in Ozersk instead.",
+          "permalink": "/r/primeriatravel/comments/tg0001/hotel_recommendations_for_testgrad/tc0007/",
+          "_meta": {},
+          "replies": ""
+        }
+      }
+    ]
+  }
+}

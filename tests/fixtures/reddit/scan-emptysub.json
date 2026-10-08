@@ -1,0 +1,4 @@
+{
+  "request": {"path": "posts/search", "params": {"subreddit": "emptysub", "limit": 100, "sort": "desc"}},
+  "response": {"data": []}
+}

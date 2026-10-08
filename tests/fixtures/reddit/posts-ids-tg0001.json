@@ -1,0 +1,17 @@
+{
+  "request": {"path": "posts/ids", "params": {"ids": "tg0001"}},
+  "response": {
+    "data": [
+      {
+        "id": "tg0001",
+        "subreddit": "primeriatravel",
+        "author": "synthetic_op",
+        "title": "Hotel recommendations for Testgrad?",
+        "selftext": "Two nights in March with a small dog. Thanks u/synthetic_helper for the earlier tips.",
+        "score": 31,
+        "num_comments": 4,
+        "created_utc": 1770717600
+      }
+    ]
+  }
+}

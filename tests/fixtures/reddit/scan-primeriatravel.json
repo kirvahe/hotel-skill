@@ -1,0 +1,31 @@
+{
+  "request": {"path": "posts/search", "params": {"subreddit": "primeriatravel", "limit": 100, "sort": "desc"}},
+  "response": {
+    "data": [
+      {"id": "sp0001", "subreddit": "primeriatravel", "author": "synthetic_poster_1",
+       "title": "Where to stay in Testgrad with a small dog?",
+       "selftext": "Looking for a calm hotel, budget 180 a night.",
+       "score": 12, "num_comments": 9, "created_utc": 1781524800},
+      {"id": "sp0002", "subreddit": "primeriatravel", "author": "synthetic_poster_2",
+       "title": "Beaches near Ozersk",
+       "selftext": "Any tips for June?",
+       "score": 5, "num_comments": 3, "created_utc": 1777714200},
+      {"id": "sp0003", "subreddit": "primeriatravel", "author": "synthetic_poster_3",
+       "title": "Two weeks in Primeria: trip report",
+       "selftext": "Started in Ozersk, ended in testgrad. The guesthouse by the river was lovely. Shout-out to u/synthetic_poster_1.",
+       "score": 88, "num_comments": 40, "created_utc": 1763661600},
+      {"id": "sp0004", "subreddit": "primeriatravel", "author": "synthetic_poster_4",
+       "title": "Testgradian street food guide",
+       "selftext": "Dumplings everywhere.",
+       "score": 20, "num_comments": 6, "created_utc": 1710058500},
+      {"id": "sp0005", "subreddit": "primeriatravel", "author": "synthetic_poster_5",
+       "title": "Hotels in TESTGRÁD old town?",
+       "selftext": "",
+       "score": 3, "num_comments": 2, "created_utc": 1688244300},
+      {"id": "sp0006", "subreddit": "primeriatravel", "author": "synthetic_poster_6",
+       "title": "Testgrad in winter",
+       "selftext": "Is it worth it?",
+       "score": 4, "num_comments": 5, "created_utc": 1660557600}
+    ]
+  }
+}
