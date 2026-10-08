@@ -172,7 +172,9 @@ Before searching, cross-check the trip dates against this table. If the requeste
 
 ## Step 3: Search Sources
 
-Run **parallel** WebSearch queries. Minimum 6 queries, adapted to city and occasion:
+Run **parallel** WebSearch queries. Minimum 6 queries, adapted to city and occasion. Exception: `site:reddit.com` queries go to `firecrawl_search` and the threads are read per the `reddit-research` skill. WebSearch returns no Reddit threads.
+
+**Search languages — every search, no exceptions:** **A.** the country's language (plus the regional language where one exists: Catalan, Euskara, Galego…), **B.** English, **C.** the language of the subject's origin or community, if any (e.g. a Japanese-run inn in Paris → also Japanese). The language the user typed the request in is never C on its own (Russian-typed request for Seville → Spanish + English, no Russian). Write the A query set first, then B, then C, in every query block, Reddit patterns and subreddit queries included — running them in parallel doesn't change that order. The queries below are English templates: for A and C, rewrite each one the way a native speaker would type it — grammatical, translating the meaning rather than the words, with native compounds (German "Boutiquehotel", not "Hotel Boutique"); keep operators (`site:`, `OR`, `NOT`) and brand/collection names unchanged. Example: Granada → Spanish + English. Country and regional Reddit subs: `references/search-sources.md` → "Multi-language Reddit subs".
 
 ### Standard queries:
 1. `site:reddit.com r/travel {city} boutique hotel hidden gem`

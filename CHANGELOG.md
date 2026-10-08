@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- `workflows/find-hotel.md` Step 3 and `references/search-sources.md`: every search runs in the country's language first (plus the regional language where one exists), then English, then the language of the subject's origin. Templates are rewritten the way a native speaker would type them, with operators and brand names unchanged. This rule was first applied to an installed copy and is now part of the repository.
+
 ## [v1.2] — 2026-10-03
 
 Structural alignment with Anthropic's "Skill authoring best practices" guide. Triggers, rules, step order, output format, `install.sh` and `scripts/` are unchanged. User data is not migrated or modified.

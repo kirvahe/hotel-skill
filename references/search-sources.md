@@ -14,6 +14,7 @@ Search query patterns for each approved source. Goal: maximum recommendation acc
 <source name="Reddit">
 **When:** Always (first source)
 **Why:** Real travelers, detailed reviews, no ads
+**How:** follow the `reddit-research` skill — `site:reddit.com` queries below go to `firecrawl_search` (Exa and WebSearch return no Reddit threads); scan the city subs listed below; read threads in full through the Arctic Shift archive. Search snippets are not Reddit data.
 
 **Query patterns:**
 - `site:reddit.com r/travel {city} boutique hotel hidden gem`
@@ -37,12 +38,12 @@ Search query patterns for each approved source. Goal: maximum recommendation acc
 </source>
 
 <source name="Multi-language Reddit subs">
-**When:** For any city in a country with strong regional language identity (Spain regions, Italy, Turkey, Portugal, Greece, Japan, etc.)
+**When:** Always — every city, every country (search languages A/B/C, see `workflows/find-hotel.md` Step 3)
 **Why:** Diaspora and locals surface character signals that tourist-language results miss
 
 ## Multi-language Reddit subs (run alongside English)
 
-For countries with strong regional language identity, search regional-language Reddit subs in addition to English (r/travel, r/europe). Diaspora and locals surface character signals tourist-language results miss.
+Always search the country-language subs (language A) — plus regional-language subs where they exist — in addition to English (B: r/travel, r/europe), and communities in the language of the subject's origin (C) when there is one — never the request language on its own. Diaspora and locals surface character signals tourist-language results miss. The list below is not exhaustive: for a country not listed, find its national and city subs (e.g. Spain: r/es, r/askspain, r/{city}).
 
 **Per-country sub list:**
 
@@ -55,7 +56,7 @@ For countries with strong regional language identity, search regional-language R
 - **Japan (any city):** r/japan + city-specific r/tokyo, r/kyoto, r/osaka — English queries surface tourist-tier; Japanese queries via subs like r/Japanese surface ryokan / local-only
 
 **How to apply:**
-- Run regional-language queries IN PARALLEL with English queries (via parallel subagent calls in find-hotel.md Step 3)
+- Run regional-language queries IN PARALLEL with English queries (via parallel subagent calls in find-hotel.md Step 3), but list the A-language block first
 - Do not REPLACE English queries — local-language adds; English is still good for tourist-friendly hotels
 - Translate user's original keywords to the regional language where natural (e.g., "neighborhood" → "barrio" in Spanish, "quartiere" in Italian, "mahalle" in Turkish)
 </source>
