@@ -10,7 +10,7 @@ Format for recording hotel stay reviews. Booking-history is the key file for sys
 </overview>
 
 <file_location>
-`~/.claude/skills/hotel/data/booking-history.md`
+`{skill}/data/booking-history.md`
 </file_location>
 
 <entry_format>

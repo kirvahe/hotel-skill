@@ -12,8 +12,8 @@
 **Read BEFORE recording:**
 1. `references/feedback-format.md` — recording format and rating scale
 2. `references/format-guide.md` — file-mode rule and `{city-slug}-{YYYY-MM}` folder convention
-3. `~/.claude/skills/hotel/data/booking-history.md` — existing log
-4. `~/.claude/skills/hotel/data/taste-profile.md` — for rating context
+3. `{skill}/data/booking-history.md` — existing log
+4. `{skill}/data/taste-profile.md` — for rating context
 </required_reading>
 
 <phase_detection>
@@ -55,7 +55,7 @@ Use `Read` on the provided path (PDF, email text, screenshot). Extract:
 
 ### Step 1.2: Append to booking-history.md (provisional entry)
 
-Append a provisional H3-block at the end of the `## Stays` section in `~/.claude/skills/hotel/data/booking-history.md`.
+Append a provisional H3-block at the end of the `## Stays` section in `{skill}/data/booking-history.md`.
 
 Use the H3-block template from `references/feedback-format.md`, but mark it provisional:
 
@@ -92,7 +92,7 @@ Work through every item. Do not skip. Print the result as a checklist in the res
 
 Save a human-readable summary to:
 
-`~/.claude/skills/hotel/data/trips/{city-slug}-{YYYY-MM}/booking-details.md`
+`{skill}/data/trips/{city-slug}-{YYYY-MM}/booking-details.md`
 
 Where `{city-slug}` follows the convention from `references/format-guide.md` (lowercase, ASCII, hyphenated). Create the folder if it does not exist. Copy the original PDF / screenshot next to it as `booking-confirmation.{ext}`.
 
@@ -206,7 +206,7 @@ If any of these fire, append the hotel to the city-specific feedback file:
 - Negative keywords (English defaults; the user's localized negatives can be added to `taste-profile.md` `## Negative keywords`): "soulless", "generic", "chain feel", "didn't work", "disappointing"
 - User explicitly asks to "never recommend this again"
 
-**Target file:** `~/.claude/skills/hotel/data/feedback/feedback_{city-slug}_hotels.md`. Create the `feedback/` directory if it does not exist.
+**Target file:** `{skill}/data/feedback/feedback_{city-slug}_hotels.md`. Create the `feedback/` directory if it does not exist.
 
 Where `{city-slug}` here uses the **feedback-file convention**, which is *compact* and differs from the trip-folder convention in `format-guide.md`:
 
@@ -281,7 +281,7 @@ Avoid:
 - [ ] booking-history.md updated with provisional "Upcoming" entry
 - [ ] Safety checklist run, every item answered (not skipped)
 - [ ] Red flags surfaced with deadline-pinned TODOs
-- [ ] booking-details.md + artifact copy saved under `~/.claude/skills/hotel/data/trips/{city-slug}-{YYYY-MM}/`
+- [ ] booking-details.md + artifact copy saved under `{skill}/data/trips/{city-slug}-{YYYY-MM}/`
 - [ ] Cancellation deadline stated explicitly in local date + time + timezone
 - [ ] Action plan delivered in terminal response
 

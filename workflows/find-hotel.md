@@ -18,12 +18,12 @@
 
 <required_reading>
 **Read BEFORE searching:**
-1. `~/.claude/skills/hotel/data/taste-profile.md` — full profile
+1. `{skill}/data/taste-profile.md` — full profile
 2. `references/search-sources.md` — query patterns and source reliability tiers
 3. `references/format-guide.md` — response format and file-mode rule
 4. `references/pet-search.md` — pet-friendly protocol (apply when a pet is set in `taste-profile.md`)
-5. `~/.claude/skills/hotel/data/booking-history.md` — past bookings
-6. **All `feedback_*_hotels.md` files** from `~/.claude/skills/hotel/data/feedback/` (created on first negative rating — may not exist yet). Glob for `~/.claude/skills/hotel/data/feedback/feedback_*_hotels.md`. Read every match. Extract hotel names into a working blacklist for Step 2d.
+5. `{skill}/data/booking-history.md` — past bookings
+6. **Blacklist:** run `python3 {skill}/bin/blacklist.py {skill}/data/feedback`. It reads every `feedback_*_hotels.md` and prints the blacklist as JSON for Step 2d. Report any file it lists under `skipped`. Do not glob this folder yourself (see SKILL.md, Data layout).
 </required_reading>
 
 <process>
@@ -40,8 +40,8 @@ Final shape: `continuation_state = { exclusion_list, mentioned_candidates, prior
 
 **Run AFTER the city is identified in Step 1's parse, but BEFORE Step 2a (booking-history load). Step 0 reads only the city slug from Step 1's parse; full `continuation_state` is completed in Step 1.** This step deals exclusively with the city cache — it does not touch booking-history, blacklists, or taste-profile (those are loaded later by Steps 2a–2d).
 
-1. **Consume the city slug** resolved in Step 1's parse. City-slug rule: see `~/.claude/skills/hotel/data/cities/README.md` `## Slug rule` (created by `install.sh`).
-2. **Check existence** of `~/.claude/skills/hotel/data/cities/{city-slug}.md`.
+1. **Consume the city slug** resolved in Step 1's parse. City-slug rule: see `{skill}/data/cities/README.md` `## Slug rule` (created by `install.sh`).
+2. **Check existence** of `{skill}/data/cities/{city-slug}.md`.
 3. **If file does NOT exist:** log internally "cold-start for {city}" and continue to Step 1 / Step 2a normally. The cache file will be created later when results are saved (see Step 8). No echo to user needed for cold start.
 4. **If file exists:** load it and parse the canonical sections:
    - `## Searched` — places already researched (informational only; do not block on duplicates)
@@ -97,7 +97,7 @@ The inferred occasion drives ranking modifiers in Step 4 (composed into the cand
 
 ### Step 1b: Pet filter parsing
 
-Detect pet-presence signal. **Default:** read `## Pet` section in `~/.claude/skills/hotel/data/taste-profile.md`. If a pet is set, `pet=true` is the baseline; most trips include the pet. Set `pet=false` ONLY on explicit signals:
+Detect pet-presence signal. **Default:** read `## Pet` section in `{skill}/data/taste-profile.md`. If a pet is set, `pet=true` is the baseline; most trips include the pet. Set `pet=false` ONLY on explicit signals:
 
 - "without the pet", "trip without [name]", "couple-only", "leaving the pet with [sitter]"
 - Destination operationally hostile to the user's pet (e.g., a strictly no-pets resort the user named)
@@ -119,14 +119,14 @@ The inferred `occasion` and `pet` flags are added to `continuation_state` from S
 ## Step 2: Check Existing Data
 
 ### 2a. Booking History
-Check `~/.claude/skills/hotel/data/booking-history.md`.
+Check `{skill}/data/booking-history.md`.
 Find entries for this city. Consider:
 - High-rated hotels in this city -> note what worked
 - Low-rated hotels -> avoid similar patterns
 - Don't recommend already stayed hotels (unless asked)
 
 ### 2b. Problematic Cities
-Read `~/.claude/skills/hotel/data/taste-profile.md` `## Problematic cities` section (if populated). Any city where the user's historical hit rate is poor gets flagged here — mention it in the response, dig deeper (minimum 8 queries), and avoid mainstream picks.
+Read `{skill}/data/taste-profile.md` `## Problematic cities` section (if populated). Any city where the user's historical hit rate is poor gets flagged here — mention it in the response, dig deeper (minimum 8 queries), and avoid mainstream picks.
 
 Cities with no history -> full exploration mode.
 
@@ -275,7 +275,7 @@ For each hotel:
 6. Google Maps link
 7. Vibe comparison with profile reference
 
-**If a city is flagged in your taste-profile.md "## Problem cities" section**: mention it and dig deeper.
+**If a city is flagged in your taste-profile.md `## Problematic cities` section**: mention it and dig deeper.
 **If found collection hotels** (SLH, Design Hotels, LHW): flag them.
 
 ## Step 7: Summary Table

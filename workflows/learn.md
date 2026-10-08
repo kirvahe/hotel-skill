@@ -14,8 +14,8 @@
 
 <required_reading>
 **Read BEFORE analysis:**
-1. `~/.claude/skills/hotel/data/booking-history.md` — all bookings
-2. `~/.claude/skills/hotel/data/taste-profile.md` — current profile
+1. Run `python3 {skill}/bin/stays.py {skill}/data/booking-history.md` — every stay as JSON: the `## Legacy stays` tables and the `## Stays` H3 blocks
+2. `{skill}/data/taste-profile.md` — current profile
 </required_reading>
 
 <process>
@@ -49,6 +49,8 @@ For each H3-block stay in booking-history.md:
 - **Occasion** field → per-occasion analysis (ski / beach / city-break / anniversary / concert / new-country-exploration hit rates).
 - **Pet** field → pet-impact analysis (does pet-true correlate with lower ratings? which hotels handled pets well?).
 - Rating is in the header line: `### {Name} — {City}, {YYYY-MM-DD} — {N.M}/10`. Use the actual decimal value, no rounding.
+
+**Legacy stays** (`"section": "legacy"` in the `stays.py` output) count as data points too. They have no Peak/End/Disconfirm/Return fields, so they feed the rating, city and type statistics but not the field-level signals above. Keep each rating exactly as written: a range such as `5-6` stays a range, and a context note such as `7 для Примерска` stays attached to its rating. Report ranges and context-qualified ratings separately instead of converting them into one number. List unrated stays (`"rated": false`) at the end of the report so the user can rate them.
 
 When a hotel appears more than once (e.g., a re-stay), treat them as separate data points.
 

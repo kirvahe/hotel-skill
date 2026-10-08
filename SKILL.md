@@ -5,20 +5,26 @@ argument-hint: [city budget/occasion]
 version: "1.2"
 ---
 
+## Before anything else
+
+`{skill}` in every workflow and reference file means this skill's folder: `${CLAUDE_SKILL_DIR}`. User data lives in `{skill}/data/`; scripts live in `{skill}/bin/`.
+
+Run `python3 ${CLAUDE_SKILL_DIR}/bin/preflight.py` first. If it prints `"status": "stop"`, show the user its `message` and stop. Otherwise continue.
+
 <essential_principles>
 ## How This Skill Works
 
 ### 1. Taste Profile Is the Foundation
 Before any recommendation, read the profile:
-`~/.claude/skills/hotel/data/taste-profile.md`
+`${CLAUDE_SKILL_DIR}/data/taste-profile.md`
 
 Key profile facts (always in context):
 - **TOP-3:** loaded from `taste-profile.md` `## TOP-3` section — the user's three reference hotels that anchor the rating scale
 - **Core formula:** architecturally beautiful + compact (up to ~60 rooms) + fresh/renovated + hidden gem + interesting neighborhood + personal service
 - **Collections signal quality:** LHW, SLH, Design Hotels, Autograph Collection
-- **Aspirational references:** loaded from `taste-profile.md` — hotels the user has not yet stayed at but considers benchmarks
+- **Aspirational references:** loaded from `taste-profile.md` `## Aspirational tier` — hotels the user has not yet stayed at but considers benchmarks
 - **Budget:** no default — always ask
-- **Home city:** loaded from `taste-profile.md` "Base" section — check before recommending hotels in the home city (don't recommend a hotel in the user's own city for a trip from that city; use home district context when assessing "interesting neighborhood")
+- **Home city:** loaded from `taste-profile.md` `## Base` section — check before recommending hotels in the home city (don't recommend a hotel in the user's own city for a trip from that city; use home district context when assessing "interesting neighborhood")
 - **Booking.com loyalty tier:** loaded from `taste-profile.md` if set — configure your Booking.com Genius level (if any) for discount/upgrade hints
 - **Pet (default):** loaded from `taste-profile.md` `## Pet` section if set. If a pet is part of the profile, pet-friendly is a **baseline filter**, not a mode — never ask "do you need pet-friendly?", always assume yes unless the user says otherwise.
 - **Pet protocol reference:** `references/pet-search.md` — room-type trap, welcome-vs-tolerate, cross-reference tiers, pet-paradox detection, ES + EN call scripts.
@@ -44,9 +50,9 @@ Vibe references come from the user's `taste-profile.md` TOP-3, Strong, and Aspir
 <data_layout>
 ## Data layout
 
-User-specific data (taste-profile, booking history, city caches) lives at `~/.claude/skills/hotel/data/`. The skill creates this on first run via `install.sh`.
+User-specific data (taste profile, booking history, city caches, feedback, trips) lives in `${CLAUDE_SKILL_DIR}/data/`. It may be a link to a folder kept elsewhere (`install.sh --data-dir`).
 
-Templates in this repo (`taste-profile-template.md`, `booking-history-template.md`, `cities-template.md`) provide the structure — `install.sh` copies them to `data/` if not already present. The `feedback/` and `trips/` folders are created by the workflows the first time they write there.
+**Start every Glob or Grep on user data at `{skill}/data/` or deeper.** A search started at the skill folder does not follow a linked data folder and comes back empty without an error. Reading a named file works either way. The `feedback/` and `trips/` folders are created by the workflows the first time they write there.
 
 Files inside `data/`:
 
@@ -91,7 +97,7 @@ What are we doing?
 <round_detection>
 ## Round Detection
 
-On every find-hotel invocation, BEFORE loading booking-history, check whether `~/.claude/skills/hotel/data/cities/{city-slug}.md` exists.
+On every find-hotel invocation, BEFORE loading booking-history, check whether `${CLAUDE_SKILL_DIR}/data/cities/{city-slug}.md` exists.
 
 **If yes — load it.** Parse these sections:
 - `## Searched` — prior search history (date + query + outcome)

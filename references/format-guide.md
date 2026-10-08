@@ -19,7 +19,7 @@ File mode means: save the complete, structured list to a markdown file in the tr
 
 ### Path convention
 
-`~/.claude/skills/hotel/data/trips/{city-slug}-{YYYY-MM}/hotels-shortlist.md`
+`{skill}/data/trips/{city-slug}-{YYYY-MM}/hotels-shortlist.md`
 
 Where:
 - `{city-slug}` — City-slug rule: see `data/cities/README.md` `## Slug rule` (created by `install.sh`).

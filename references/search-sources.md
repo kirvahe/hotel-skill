@@ -221,7 +221,7 @@ A hotel is a reliable recommendation if its load-bearing claims pass the `<relia
 Collection membership (SLH, Design Hotels, LHW, Autograph) is itself an A-tier signal. A C-tier-only hotel never ships in the shortlist — either upgrade the sourcing or drop it.
 
 ### Cities with quirks:
-City-specific patterns (problematic cities, home-city knowledge, etc.) are tracked in `~/.claude/skills/hotel/data/taste-profile.md` `## Problematic cities` and `## Home city` sections. The skill consumes those automatically — do not hardcode city rules here.
+City-specific patterns (problematic cities, home-city knowledge, etc.) are tracked in `{skill}/data/taste-profile.md` `## Problematic cities` and `## Base` sections. The skill consumes those automatically — do not hardcode city rules here.
 
 General heuristics that apply everywhere:
 - Avoid the most touristed central strip (Rambla / Plaza Mayor / Centro Storico equivalents) unless the user explicitly wants it
