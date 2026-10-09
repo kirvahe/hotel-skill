@@ -1,0 +1,7 @@
+{"family": "reddit", "status": "complete", "reason": "", "records": 2, "tool_route": "firecrawl", "route_changes": [],
+ "languages": {"A": "es", "B": "en", "C": null}, "queries": [], "reads": [],
+ "source_map": [{"outlet": "r/testgradtravel", "url": "https://www.reddit.com/r/testgradtravel/", "language": "en", "kind": "subreddit", "yield": 1, "new": true}],
+ "district_notes": [],
+ "negative_reports": [{"candidate": "Hotel Sombra", "url": "https://www.reddit.com/r/testgrad/comments/t3st09/noise/c0mm09/",
+                       "quote": "the street outside is loud until 3am"}],
+ "notes": []}

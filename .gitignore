@@ -1,5 +1,5 @@
-# Personal data — never commit
-data/
+# Personal data — never commit (no trailing slash: data is often a symlink, which data/ misses)
+data
 cities/
 recommendations/
 taste-profile.md
@@ -18,3 +18,10 @@ Thumbs.db
 # Backups
 *.bak
 *~
+
+# Plans name personal trips and data; keep them out of the public repo
+docs/plans/
+
+# Personal data written by runs
+trips/
+feedback/

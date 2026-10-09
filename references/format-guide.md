@@ -1,96 +1,77 @@
+## Contents
+- Trip folder and the saved answer — path convention
+- The answer's layout — what the renderer writes, what the model writes
+- Overview line
+- "Why you" and vibe lines
+- References for vibe comparisons
+- Calibration anchors — tiers and how they are used
+
 <overview>
-Response format when recommending hotels. Each hotel — structured, with mandatory elements.
+How a find-hotel answer is laid out, and what the model contributes to it. The layout is fixed: `bin/render.py` writes the shortlist and the answer from the run folder, the same way every run, with labels in the request language. The model writes only the text that needs judgment, into `advice.json` and `verdicts.json`.
 </overview>
 
-<file_mode_rule>
-## File-Mode Rule — decide before writing the response
+<trip_folder>
+## Trip folder and the saved answer
 
-**When the full result set has ≥5 hotels OR any URL is longer than ~60 characters → use file mode.**
+`{skill}/data/trips/{city-slug}-{YYYY-MM}/`
 
-File mode means: save the complete, structured list to a markdown file in the trip folder, then respond in the terminal with only the **top-3** plus a pointer to the file.
+- `{city-slug}`: see `data/cities/README.md` `## Slug rule` (created by `install.sh`); `bin/ledger.py slug "City"` prints it.
+- `{YYYY-MM}`: year and month of arrival. `15 Jun 2027` → `2027-06`.
+- The folder holds the find-hotel run (`run/`), the saved answer (`hotels-shortlist.md`) and, after booking, `booking-details.md` and the confirmation (rate-stay Phase 1).
 
-### Path convention
+The answer is always saved to the file, then shown in the chat as is, ending with a clickable link to the file.
+</trip_folder>
 
-`~/.claude/skills/hotel/data/trips/{city-slug}-{YYYY-MM}/hotels-shortlist.md`
+<answer_layout>
+## The answer's layout
 
-Where:
-- `{city-slug}` — City-slug rule: see `data/cities/README.md` `## Slug rule` (created by `install.sh`).
-- `{YYYY-MM}` = year and month of arrival. `15 Jun 2027` → `2027-06`.
-- Same slug convention is used for `booking-details.md` (Phase 1 of `rate-stay.md`) so one trip folder holds the shortlist and the booking artifact side by side.
+`render.py` writes, in this order:
 
-### Why file mode exists
+1. Title (city and dates) and the trip line (guests, budget, dog).
+2. The overview line (from `advice.json`).
+3. **Hotels**: every kept hotel, numbered as on the shortlist. Each entry: name, area, the checked price per night or ❓; flags (Booking only, score unverified ❓, pet policy, below your floor); "why you" and vibe lines (from `advice.json`); the rate and cancellation the final check found; negative reports; earlier strike-outs; past stays with their rating; a dated Booking link and a Google Maps link.
+4. **Beyond budget**: only hotels with a "clearly better" verdict (R25), each with its reason.
+5. **Airbnb — special formats**: whole houses, carmens, fincas the sources present as stays, with a dated Airbnb search link and "dates not verified" (R19).
+6. **Where to stay** and **Tips** (from `advice.json`).
+7. **Skipped**: every removal with its reason (blacklist, floor, chain, judgment, dogs, closed or full on the dates).
+8. **Checks**: each research family and module as ran, partial, skipped or failed (R22).
 
-Long markdown tables in the terminal break in three ways: (1) URL wrap mangles clickable links, (2) narrow columns hide pet / collection flags, (3) format drift under context pressure past 100k tokens. A file on disk is immune to all three, stays clickable in Obsidian / VS Code, and persists as a trip artifact.
+When no hotel is left, the Hotels section becomes "Nothing fits", with what removed the candidates and what to change: budget, district or dates (F2, R17).
 
-### Terminal response in file mode
+There is no fixed number of options: the answer holds every hotel the user kept (R17).
 
-1. `Saved full shortlist to {absolute path}` — clickable file reference
-2. **Top 3 hotels** in short form (name, 1-line "why you", Booking link, Maps link)
-3. Any red flags (blacklist skips, pet-paradox warning, festivo warning)
+What the model writes, in the request language:
 
-### When NOT to use file mode
+| File | Field | Content |
+|---|---|---|
+| `verdicts.json` | `clearly_better`, `not_better` | One verdict per over-budget hotel, each with a one-line reason |
+| `advice.json` | `overview` | The overview line |
+| `advice.json` | `entries` | `{"candidate", "why", "vibe"}` for each hotel and Airbnb entry in the answer |
+| `advice.json` | `districts`, `tips` | District advice from the research's district notes; practical tips for the trip |
+</answer_layout>
 
-≤4 hotels AND all URLs short — respond inline with full format per `<response_format>`.
-</file_mode_rule>
+<overview_line>
+## Overview line
 
-<response_format>
-## Format Per Hotel
+The overview line names the inferred occasion (`references/occasion-taxonomy.md`) and, when one fits, the closest calibration anchor:
 
-```
-### N. {Hotel Name} — {X rooms}, {collection if any}
+> {Occasion} pick in {City} — {one-line characterization with anchor reference}.
 
-**Why you:** {1-2 sentences — connection to profile and request. Not generic "nice hotel", but specifically why THIS user.}
+Worked examples (structure only — use the user's own anchors from `taste-profile.md`):
 
-**What's special:** {Architecture, design, signature feature, neighborhood}
+- "Concert pick in {City} — like {your-anchor-7} but with the venue a 5-minute walk away."
+- "Anniversary pick in {Region} — {your-anchor-9.5-10}-tier execution, romantic touches."
+- "City-break pick in {City} — solid {your-anchor-7} territory, walkable neighbourhood."
 
-~EUR XXX-YYY/night
+Two occasions join with `+`: "Anniversary + new-country-exploration pick in {City} — …".
+</overview_line>
 
-- [Booking.com]({link})
-- [Google Maps]({link})
+<why_and_vibe>
+## "Why you" and vibe lines
 
-**Vibe:** {comparison with profile reference}
-```
-
-### Mandatory elements:
-1. Hotel name + room count + collection
-2. "Why you" — personal reason
-3. What's special
-4. Price range per night
-5. Booking.com link
-6. Google Maps link
-7. Vibe comparison
-
-### Optional elements:
-- Genius discount info (if available)
-- Lobby bar / rooftop / spa
-- Best room type to book
-- Seasonality notes (best time to visit)
-- Renovation date (if recent = bonus)
-
-### Overview line
-
-The Overview line **must include the inferred occasion-tag** (from Step 1a of `workflows/find-hotel.md`, defined in `references/occasion-taxonomy.md`) and **should** reference the closest calibration anchor (see `## Calibration Anchors` below).
-
-Format:
-
-> **{Occasion} pick in {City} — {one-line characterization with anchor reference}.**
-
-Where `{Occasion}` is one of the six occasion tags (`city-break`, `ski`, `beach`, `anniversary`, `concert`, `new-country-exploration`). Capitalize the first letter for the line ("City-break pick in Lisbon — …").
-
-Worked examples (structure-only — substitute the user's own anchors from `taste-profile.md`):
-
-- "**Concert pick in {City}** — like {your-anchor-7} but with venue 5-min walk."
-- "**Ski pick in {Resort}** — strictly better than {your-anchor-8}-tier execution, ski-in/ski-out."
-- "**Anniversary pick in {Region}** — {your-anchor-9.5-10}-tier execution, romantic touches."
-- "**City-break pick in {City}** — solid {your-anchor-7} territory, walkable neighborhood."
-- "**New-country-exploration pick in {City}** — central location for first-time orientation, {your-anchor-8}-tier."
-
-If multi-occasion (e.g., anniversary + new-country-exploration), surface both tags joined by `+`:
-
-- "**Anniversary + new-country-exploration pick in {City}** — …"
-
-If the user corrects the occasion in the Step 1c echo, regenerate the Overview line with the corrected tag before saving.
-</response_format>
+- **Why you:** one or two sentences on why this hotel fits this user and this trip: the profile's formula (building, size, freshness, neighbourhood, service) and the occasion. Not "nice hotel". Every fact in it comes from the run's sources; room count and collection (SLH, Design Hotels, LHW, Autograph, Michelin Key) when a source states them.
+- **Vibe:** a comparison with one of the user's reference hotels (below).
+</why_and_vibe>
 
 <vibe_comparisons>
 ## References for Vibe Comparisons
@@ -130,45 +111,9 @@ Three reference hotels anchor the rating scale. These come from YOUR `taste-prof
 
 ### How anchors are used
 
-- In Vibe sections of every hotel recommendation: pick whichever anchor is closest, e.g. "Like {your-anchor-8} but in a Renaissance palazzo".
+- In vibe lines: pick whichever anchor is closest, e.g. "Like {your-anchor-8} but in a Renaissance palazzo".
 - In rating gates (`/hotel rate-stay` Phase 2): before assigning 9+, the question "strictly better than {your-anchor-8}?" must be explicit.
-- In response Overview line: when comparing to your lifetime best, refer to your anchors by name.
+- In the overview line: when comparing to your lifetime best, refer to your anchors by name.
 
 If your `taste-profile.md` is empty/new, the skill will ask you to nominate three anchors during onboarding.
 </vibe_comparisons>
-
-<quantity>
-## Number of Recommendations
-
-**Standard:** 5 main + 2 premium (stretch budget)
-**Minimum:** 3 main (if < 3 worthy — say so honestly)
-**Maximum:** 5+2 (more = dilutes quality)
-
-### Premium options:
-- 2 hotels that are above stated budget but worth the splurge
-- Flag as "PREMIUM" clearly
-- Explain why the premium is justified
-
-### If city is the user's home city or well-known:
-- Focus on NEW openings or overlooked gems
-- Can give fewer if only a few are genuinely new
-
-### If city is "problematic" (per `taste-profile.md` `## Problematic cities`):
-- Mention the track record
-- Double the search effort
-- Consider adjacent cities/areas
-</quantity>
-
-<summary_table>
-## Summary Table (at end of response)
-
-```markdown
-| # | Hotel | Rooms | ~EUR/night | Collection | Key Feature |
-|---|---|---|---|---|---|
-| 1 | [Name](booking-link) | XX | XXX-YYY | SLH | architecture |
-| 2 | [Name](booking-link) | XX | XXX-YYY | — | rooftop bar |
-| ... | | | | | |
-| P1 | [Name](booking-link) | XX | XXX-YYY | LHW | PREMIUM |
-| P2 | [Name](booking-link) | XX | XXX-YYY | Design Hotels | PREMIUM |
-```
-</summary_table>

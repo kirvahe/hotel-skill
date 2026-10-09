@@ -1,5 +1,28 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- `workflows/find-hotel.md` Step 3 and `references/search-sources.md`: every search runs in the country's language first (plus the regional language where one exists), then English, then the language of the subject's origin. Templates are rewritten the way a native speaker would type them, with operators and brand names unchanged. This rule was first applied to an installed copy and is now part of the repository.
+
+## [v1.2] — 2026-10-03
+
+Structural alignment with Anthropic's "Skill authoring best practices" guide. Triggers, rules, step order, output format, `install.sh` and `scripts/` are unchanged. User data is not migrated or modified.
+
+### Added
+
+- `evals/evals.md` — five manual smoke-test scenarios (find-hotel cold start, find-hotel multi-round continuation, rate-stay Phase 1, rate-stay Phase 2, learn) with synthetic fixtures. Not installed by `install.sh`.
+- Table of contents at the top of `workflows/find-hotel.md`, `workflows/rate-stay.md`, `workflows/learn.md` and all five files in `references/`.
+
+### Changed
+
+- `SKILL.md` frontmatter `version` set to `1.2`.
+- `SKILL.md` data layout now lists `cities/README.md`, `feedback/feedback_{city-slug}_hotels.md` and `trips/{city-slug}-{YYYY-MM}/`, which the workflows already read and write.
+- `SKILL.md` reference index uses full `references/…` paths and states which workflow step reads each file. The workflow index uses full `workflows/…` paths and describes both rate-stay phases.
+- `workflows/rate-stay.md` Step 2.4: "new-stays section" renamed to the `## Stays` section, matching the rest of the step.
+- `ROADMAP.md`: planned features move from v1.2 to v1.3. `README.md`: roadmap reference and data-folder tree updated to match.
+
 ## [v1.1.1] — 2026-05-11
 
 Adds automatic updates via a SessionStart hook. After running `./install.sh` once with this version, future releases install themselves silently every 24 hours — no terminal commands required. Skill content is identical to v1.1.

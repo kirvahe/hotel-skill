@@ -8,36 +8,65 @@
 #
 # Usage:
 #   chmod +x install.sh
-#   ./install.sh
+#   ./install.sh [--skill-dir DIR] [--data-dir DIR] [--non-interactive]
+#                [--guard-in-settings | --no-guard-in-settings] [--uninstall-guard]
+#
+# --data-dir links the skill's data/ to a folder you keep elsewhere (for
+# example a synced folder). The folder must already exist. The installer
+# never deletes or replaces a real data/ folder; it stops and tells you how
+# to move it aside instead.
 
 set -euo pipefail
 
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET="${HOME}/.claude/skills/hotel"
-DATA="${TARGET}/data"
-CITIES="${DATA}/cities"
+DATA_DIR=""
 
 NON_INTERACTIVE=false
 UNINSTALL_HOOK=false
+GUARD_IN_SETTINGS=""   # yes | no | "" (ask; non-interactive keeps an existing registration)
+UNINSTALL_GUARD=false
 HOOK_SCRIPT_NAME="sync-hotel-skill.sh"
 HOOK_SCRIPT_DEST="${HOME}/.claude/scripts/${HOOK_SCRIPT_NAME}"
 SETTINGS_FILE="${HOME}/.claude/settings.json"
 
-# Parse args (lightweight — keeps existing zero-arg invocation working)
-for arg in "$@"; do
-  case "$arg" in
-    --non-interactive) NON_INTERACTIVE=true ;;
-    --uninstall-hook)  UNINSTALL_HOOK=true ;;
+die() { echo "ERROR: $*" >&2; exit 1; }
+
+# Parse args (zero-arg invocation keeps working)
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --non-interactive) NON_INTERACTIVE=true; shift ;;
+    --uninstall-hook)  UNINSTALL_HOOK=true; shift ;;
+    --guard-in-settings)    GUARD_IN_SETTINGS=yes; shift ;;
+    --no-guard-in-settings) GUARD_IN_SETTINGS=no; shift ;;
+    --uninstall-guard)      UNINSTALL_GUARD=true; shift ;;
+    --skill-dir)
+      [[ $# -ge 2 && -n "$2" ]] || die "--skill-dir requires a directory path"
+      TARGET="$2"; shift 2 ;;
+    --data-dir)
+      [[ $# -ge 2 && -n "$2" ]] || die "--data-dir requires a directory path"
+      DATA_DIR="$2"; shift 2 ;;
     --help)
-      echo "Usage: ./install.sh [--non-interactive] [--uninstall-hook] [--help]"
+      echo "Usage: ./install.sh [--skill-dir DIR] [--data-dir DIR] [--non-interactive] [--uninstall-hook]"
+      echo "                    [--guard-in-settings | --no-guard-in-settings] [--uninstall-guard] [--help]"
       echo ""
+      echo "  --skill-dir DIR     Install the skill here (default: ~/.claude/skills/hotel)"
+      echo "  --data-dir DIR      Link the skill's data/ to this existing folder"
       echo "  --non-interactive   Skip prompts (used by the auto-update sync script)"
       echo "  --uninstall-hook    Remove the SessionStart auto-update hook + sync script"
+      echo "  --guard-in-settings Register the guard hook in ~/.claude/settings.json without asking"
+      echo "                      (needed: a skill's own hook does not run for its subagents)"
+      echo "  --no-guard-in-settings  Do not register it"
+      echo "  --uninstall-guard   Remove the guard hook from ~/.claude/settings.json"
       echo "  --help              Show this help"
       exit 0
       ;;
+    *) die "unknown option: $1 (see --help)" ;;
   esac
 done
+
+DATA="${TARGET}/data"
+CITIES="${DATA}/cities"
 
 # Print the SessionStart hook JSON snippet for manual addition
 print_hook_snippet() {
@@ -143,6 +172,43 @@ setup_auto_update() {
   esac
 }
 
+# Register the guard hook in the settings file. A hook in SKILL.md runs only in the main
+# conversation; settings-file hooks also run for subagents, which do the searching (R21).
+# The settings file is backed up before any change (bin/settings_hook.py).
+setup_guard_in_settings() {
+  local helper="${TARGET}/bin/settings_hook.py" state
+  [ -f "${helper}" ] || return 0
+  state="$(python3 "${helper}" status --skill-dir "${TARGET}" --settings "${SETTINGS_FILE}")"
+  if [ -z "${GUARD_IN_SETTINGS}" ]; then
+    if [ "${NON_INTERACTIVE}" = true ]; then
+      [ "${state}" = "missing" ] && return 0   # never add one unasked; keep an existing one current
+      GUARD_IN_SETTINGS=yes
+    else
+      echo ""
+      echo "Register the /hotel guard hook in ${SETTINGS_FILE}?"
+      echo "  It keeps the skill's search agents off Booking and Airbnb pages; a hook inside the"
+      echo "  skill does not reach them. A backup of the file is made first. Without it, /hotel"
+      echo "  stops before searching."
+      read -r -p "  [Y/n] " reply
+      case "$reply" in n|N|no|No|NO) GUARD_IN_SETTINGS=no ;; *) GUARD_IN_SETTINGS=yes ;; esac
+    fi
+  fi
+  if [ "${GUARD_IN_SETTINGS}" = yes ]; then
+    python3 "${helper}" add --skill-dir "${TARGET}" --settings "${SETTINGS_FILE}" \
+      | sed 's/^/==> Guard hook: /' || echo "==> Could not register the guard hook; see the message above"
+  else
+    echo "==> Guard hook not registered in settings. Register later with: ./install.sh --guard-in-settings"
+  fi
+}
+
+# --uninstall-guard short-circuit (no skill files touched)
+if [ "${UNINSTALL_GUARD}" = true ]; then
+  helper="${TARGET}/bin/settings_hook.py"
+  [ -f "${helper}" ] || helper="${SRC}/bin/settings_hook.py"
+  python3 "${helper}" remove --settings "${SETTINGS_FILE}" | sed 's/^/==> Guard hook: /'
+  exit 0
+fi
+
 # --uninstall-hook short-circuit (no skill files touched)
 if [ "${UNINSTALL_HOOK}" = true ]; then
   [ -f "${HOOK_SCRIPT_DEST}" ] && rm -f "${HOOK_SCRIPT_DEST}" && echo "==> Removed sync script ${HOOK_SCRIPT_DEST}"
@@ -152,12 +218,49 @@ if [ "${UNINSTALL_HOOK}" = true ]; then
   exit 0
 fi
 
+# 0. Check the skill and data locations before writing anything.
+#    The guard hook command holds the skill's absolute path inside a quoted YAML string
+#    (see wire_guard_hook), so a path that would break that string is refused here.
+case "${TARGET}" in
+  /*) TARGET_PATH="${TARGET}" ;;
+  *)  TARGET_PATH="${PWD}/${TARGET}" ;;
+esac
+if [[ "${TARGET_PATH}" == *[\"\'\\]* ]]; then
+  die "the skill folder path contains a quote or a backslash: ${TARGET_PATH}
+       The guard hook needs a plain path. Choose another --skill-dir. Nothing was installed."
+fi
+
+if [[ -n "${DATA_DIR}" ]]; then
+  [[ -d "${DATA_DIR}" ]] || die "data folder not found: ${DATA_DIR}
+       Create it or fix the path. Nothing was installed."
+  DATA_DIR="$(cd "${DATA_DIR}" && pwd)"
+  if [[ -d "${DATA}" && ! -L "${DATA}" ]]; then
+    die "${DATA} is a real folder, not a link. Nothing was changed.
+       Move it aside first, then re-run, for example:
+         mv \"${DATA}\" \"${DATA}.bak-$(date +%Y%m%d)\""
+  fi
+elif [[ -L "${DATA}" && ! -e "${DATA}" ]]; then
+  die "${DATA} links to a missing folder: $(readlink "${DATA}")
+       Restore that folder, or re-run with --data-dir pointing at your data."
+fi
+
 echo "==> Installing /hotel skill"
 echo "    source: ${SRC}"
 echo "    target: ${TARGET}"
 
-# 1. Create target directories
-mkdir -p "${TARGET}" "${DATA}" "${CITIES}"
+# 1. Create target directories and the data link
+mkdir -p "${TARGET}"
+if [[ -n "${DATA_DIR}" ]]; then
+  if [[ -L "${DATA}" ]]; then
+    echo "==> Re-pointing data/ (was: $(readlink "${DATA}"))"
+    rm "${DATA}"
+  fi
+  ln -s "${DATA_DIR}" "${DATA}"
+  echo "==> data/ → ${DATA_DIR}"
+else
+  mkdir -p "${DATA}"
+fi
+mkdir -p "${CITIES}"
 
 # 2. Copy skill code (always overwrite — these are the skill internals)
 copy_dir() {
@@ -177,11 +280,43 @@ copy_file() {
     fi
 }
 
+# Hook commands get no ${CLAUDE_SKILL_DIR}, so SKILL.md names the guard hook as
+# __HOTEL_SKILL_DIR__/bin/guard_hook.py and the installed copy gets this install's absolute
+# path (KTD9). The repository's SKILL.md keeps the placeholder. The path has its links resolved
+# (pwd -P, as bin/settings_hook.py resolves it), so the SKILL.md command is the same string as the
+# settings-file entry and Claude Code runs the guard once per call, not twice.
+wire_guard_hook() {
+    local skill_md="${TARGET}/SKILL.md" abs escaped
+    if [[ ! -f "${skill_md}" ]] || ! grep -q '__HOTEL_SKILL_DIR__' "${skill_md}"; then
+        return 0
+    fi
+    abs="$(cd "${TARGET}" && pwd -P)"
+    if [[ "${abs}" == *[\"\'\\]* ]]; then
+        # A link to a folder whose name holds a quote: keep the path checked in step 0, which the
+        # quoted hook command can hold. The settings entry then differs and the guard runs twice.
+        abs="$(cd "${TARGET}" && pwd)"
+    fi
+    escaped="$(printf '%s' "${abs}" | sed -e 's/[\\&|]/\\&/g')"
+    sed "s|__HOTEL_SKILL_DIR__|${escaped}|g" "${skill_md}" > "${skill_md}.tmp"
+    mv "${skill_md}.tmp" "${skill_md}"
+    echo "==> Guard hook: ${abs}/bin/guard_hook.py"
+}
+
 copy_file "SKILL.md"
 copy_dir "workflows"
 copy_dir "references"
+copy_dir "bin"
+wire_guard_hook
 
-# 3. Personal data — only copy templates if user has no data yet
+# 3. Personal data — only seed templates into a folder that has no profile yet.
+#    A folder with a profile holds real data, so nothing is added to it.
+if [[ -f "${DATA}/taste-profile.md" ]]; then
+  echo "==> ${DATA} already holds a profile — no templates added (your data is safe)"
+  SEED_TEMPLATES=false
+else
+  SEED_TEMPLATES=true
+fi
+
 install_personal_file() {
     local template_src="$1"   # e.g. taste-profile-template.md
     local target_name="$2"    # e.g. taste-profile.md
@@ -198,29 +333,30 @@ install_personal_file() {
     fi
 }
 
-install_personal_file "taste-profile-template.md" "taste-profile.md"
-install_personal_file "booking-history-template.md" "booking-history.md"
+if [[ "${SEED_TEMPLATES}" == true ]]; then
+    install_personal_file "taste-profile-template.md" "taste-profile.md"
+    install_personal_file "booking-history-template.md" "booking-history.md"
 
-# Cities directory README (lightweight — never user-personal)
-if [[ -f "${SRC}/cities-template-README.md" ]]; then
-    if [[ ! -f "${CITIES}/README.md" ]]; then
+    # Cities directory README (lightweight — never user-personal)
+    if [[ -f "${SRC}/cities-template-README.md" && ! -f "${CITIES}/README.md" ]]; then
         echo "==> Seeding cities/README.md"
         cp "${SRC}/cities-template-README.md" "${CITIES}/README.md"
-    else
-        echo "==> cities/README.md already exists — skipping"
     fi
-fi
 
-# A cities-template.md sits at $DATA level for users to copy when adding a new city manually
-if [[ ! -f "${DATA}/cities-template.md" && -f "${SRC}/cities-template.md" ]]; then
-    echo "==> Seeding cities-template.md (reference for new city files)"
-    cp "${SRC}/cities-template.md" "${DATA}/cities-template.md"
+    # A cities-template.md sits at $DATA level for users to copy when adding a new city manually
+    if [[ ! -f "${DATA}/cities-template.md" && -f "${SRC}/cities-template.md" ]]; then
+        echo "==> Seeding cities-template.md (reference for new city files)"
+        cp "${SRC}/cities-template.md" "${DATA}/cities-template.md"
+    fi
 fi
 
 echo
 
 # Auto-update wiring (deploys sync script + optionally adds SessionStart hook)
 setup_auto_update
+
+# Guard hook in the settings file (covers subagents)
+setup_guard_in_settings
 
 echo
 echo "==> Done."

@@ -1,0 +1,4 @@
+{"family": "booking-search", "status": "complete", "reason": "", "records": 5, "tool_route": "firecrawl", "route_changes": [],
+ "languages": {"A": "es", "B": "en", "C": null}, "queries": [], "reads": [],
+ "source_map": [{"outlet": "Booking", "kind": "booking-query", "query": "site:booking.com hotel casco antiguo Testgrad", "language": "es", "yield": 3, "new": true}],
+ "notes": []}

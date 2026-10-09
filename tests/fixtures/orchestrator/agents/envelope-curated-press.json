@@ -1,0 +1,8 @@
+{"family": "curated-press", "status": "complete", "reason": "", "records": 9, "tool_route": "firecrawl", "route_changes": [],
+ "languages": {"A": "es", "B": "en", "C": null},
+ "queries": [{"block": "discovery", "set": "A", "lang": "es", "tool": "mcp__firecrawl__firecrawl_search", "q": "site:testgrad-daily.example hotel"}],
+ "reads": [{"tool": "mcp__firecrawl__firecrawl_scrape", "url": "https://testgrad-daily.example/best-small-hotels"}],
+ "source_map": [{"outlet": "Revista Ejemplo", "url": "https://revista.example/", "language": "es", "kind": "city magazine", "yield": 2, "new": true}],
+ "district_notes": [{"area": "Old Quarter", "note": "quiet lanes, ten minutes on foot to everything", "language": "en",
+                     "source_url": "https://testgrad-daily.example/where-to-stay", "quote": "the Old Quarter is the quiet choice"}],
+ "notes": []}

@@ -1,0 +1,2 @@
+{"candidate": "Hotel Invierno", "kind": "closure", "source_url": "https://hotelinvierno.example/noticias", "quote": "El hotel cierra por temporada a partir de la noche del 21 de noviembre de 2099.", "closed_from": "2099-11-21", "read_at": "2026-10-09T09:10:00+00:00"}
+{"candidate": "Hotel Otoño", "kind": "closure", "source_url": "https://hotelotono.example/temporada", "quote": "Cerrado del 22 de noviembre de 2099 al 28 de febrero de 2100.", "closed_from": "2099-11-22", "closed_until": "2100-02-28", "read_at": "2026-10-09T09:12:00+00:00"}

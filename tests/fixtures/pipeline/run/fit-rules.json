@@ -1,0 +1,6 @@
+{
+  "floor": 8.0,
+  "limited_choice": false,
+  "do_not_recommend": ["Grandchain", "Room Mate"],
+  "excluded_kinds": ["apartment", "bnb"]
+}

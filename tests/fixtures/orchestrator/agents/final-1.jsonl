@@ -1,0 +1,3 @@
+{"candidate": "Casa Velarta", "room_type": "Doble Superior", "rate": "Tarifa flexible", "cancellation": {"value": "free until 2099-11-25", "deadline": "2099-11-25", "source_url": "https://casavelarta.example/condiciones", "quote": "Cancelación gratuita hasta 2 días antes de la llegada."}}
+{"candidate": "Hotel Marquesa Vieja", "cancellation": {"value": "unknown"}}
+{"candidate": "El Patio Lunar", "cancellation": {"value": "unknown"}}

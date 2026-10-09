@@ -1,6 +1,6 @@
 # Roadmap — /hotel skill
 
-## v1.1 (current — first public release)
+## v1.1 (first public release)
 
 Shipped as a CE-upgrade from the internal v1.0 baseline. Mature mechanisms from the sibling `/restaurant` skill (multi-round persistence, source tier model, visit protocol) ported to the hotel domain, with hotel-specific additions (occasion taxonomy, operational verification, Spain festivo calendar, pet protocol as first-class parameter).
 
@@ -14,7 +14,16 @@ Shipped as a CE-upgrade from the internal v1.0 baseline. Mature mechanisms from 
 - Booking-rating bias adjustment heuristics
 - Pet as boolean parameter, not occasion
 
-## v1.2 (planned)
+## v1.2 (current)
+
+Structural alignment with Anthropic's skill-authoring best practices. Skill behavior is unchanged.
+
+- Table of contents at the top of every workflow and reference file
+- Data layout documents `feedback/`, `trips/` and `cities/README.md`
+- Reference and workflow indexes in SKILL.md use full relative paths and state when each file is read
+- `evals/evals.md` — five manual smoke-test scenarios on synthetic data
+
+## v1.3 (planned)
 
 Quality and onboarding improvements before considering distribution work.
 
@@ -29,7 +38,7 @@ Quality and onboarding improvements before considering distribution work.
 
 Larger structural moves, all gated on real evidence of need from v1.x use.
 
-- **Multi-traveler profiles** — per-traveler taste overlay (e.g., father-in-law profile, couple-vs-solo profile). One install, named profiles in `config.yml`, switch with `--profile`.
+- **Multi-traveler profiles** — per-traveler taste overlay (e.g., a second traveler's profile, couple-vs-solo profile). One install, named profiles in `config.yml`, switch with `--profile`.
 - **Real-time price tracking** — watch shortlisted hotels for price drops between recommendation time and cancellation deadline. Alert when a tracked hotel crosses a user-set threshold.
 - **Hotel API integration** — if Booking.com partner program access becomes feasible, replace search-and-link with direct availability and rate-plan reads. Same for SLH / LHW / Design Hotels APIs where they exist.
 - **Multi-property trips** — chain of hotels in a route (e.g., 3-stop Tuscany trip). Joint optimization for travel time between properties, not per-hotel optimization.

@@ -1,0 +1,7 @@
+{
+  "families": {
+    "curated-press": {"status": "ran", "reason": "", "records": 9, "invalid": 0, "reprompted": false},
+    "reddit": {"status": "ran", "reason": "", "records": 2, "invalid": 0, "reprompted": false},
+    "booking-search": {"status": "ran", "reason": "", "records": 5, "invalid": 0, "reprompted": false}
+  }
+}

@@ -23,24 +23,26 @@ Examples:
 Updated: YYYY-MM-DD
 
 ## Searched
-One line per search/round: `YYYY-MM-DD R{N}: {query} → {outcome / file}`
+One line per find-hotel run: `- YYYY-MM-DD {trip}: {dates} · {guests} · {budget} · {dog} → {outcome}`
+
+## Sources
+The city's source map (R3), reused by the research agents on the next trip.
+Table: Family | Outlet | Kind | Language | Where | Yield | Last used.
 
 ## Recommended
-Active picks (table: Name, Type, Area, Rating, Notes).
+Hotels kept in a final answer. Table: Name | Type | Area | Rating | Notes.
 
-## Mentioned section (researched, not selected)
-Candidates surfaced during research but not picked. Table: Name, Type, Source/Context, Date. Re-evaluate here before re-researching in later rounds.
+## Struck out
+Hotels the user struck out at a checkpoint, with the reason verbatim (R15).
+Table: Name | Reason | Date | Trip. Later runs show them with that reason; they are not removed.
 
 ## Excluded (with reason)
-Definitive exclusions. One line per hotel with a causal reason (use the user's or companion's words verbatim, preserve original language).
-
-## Round N — {outcome}
-Archived rounds (only present after Round 2+). Heading includes the outcome ("wife rejected — too corporate", "budget shifted", etc.).
-
-## Criteria changes
-Multi-round only. Format: `R{N}→R{N+1}: {what shifted and why}`.
+Definitive exclusions: later runs remove them like blacklisted hotels.
+One line per hotel: `- {Hotel} — {reason}` (the user's or companion's words verbatim, original language kept).
 ```
+
+Sections from older versions (`## Mentioned section (researched, not selected)`, `## Round N — {outcome}`, `## Criteria changes`) are kept as they are; find-hotel no longer writes them.
 
 ## Reference
 
-Round detection logic that reads/writes these files: see `<round_detection>` block in `~/.claude/skills/hotel/SKILL.md`.
+`bin/citycache.py` reads and writes these files; `bin/orchestrate.py` calls it after each checkpoint and after the answer. Rows merge by key, so a run written twice changes nothing.

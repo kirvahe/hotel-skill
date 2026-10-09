@@ -1,0 +1,4 @@
+{"candidate": "Casa Velarta", "official_url": {"value": "https://casavelarta.example/", "source_url": "https://casavelarta.example/contacto", "quote": "Casa Velarta · Calle del Pozo 4 · Testgrad"}, "judgments": [{"rule": "chain with character", "verdict": "pass", "reason": "an independent merchant house, no chain tie found"}]}
+{"candidate": "Hotel Sombra", "official_url": {"value": "https://hotelsombra.example/", "source_url": "https://hotelsombra.example/", "quote": "Hotel Sombra, Paseo del Río 12, Testgrad"}, "judgments": []}
+{"candidate": "Hotel Invierno", "official_url": {"value": "https://hotelinvierno.example/", "source_url": "https://hotelinvierno.example/", "quote": "Hotel Invierno · Testgrad"}, "judgments": []}
+{"candidate": "Hotel Otoño", "official_url": {"value": "https://hotelotono.example/", "source_url": "https://hotelotono.example/", "quote": "Hotel Otoño · Testgrad"}, "judgments": []}

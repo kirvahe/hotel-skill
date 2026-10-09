@@ -1,0 +1,8 @@
+{
+  "modules": {
+    "gmail": {"status": "ran", "reason": ""},
+    "resolver": {"status": "ran", "reason": ""},
+    "reader": {"status": "ran", "reason": ""},
+    "final_check": {"status": "ran", "reason": ""}
+  }
+}
