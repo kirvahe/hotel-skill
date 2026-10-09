@@ -13,7 +13,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "pipeline"
 sys.path.insert(0, str(FIXTURES))
 
 import runkit  # noqa: E402
-from runkit import BIN, edit_candidate, read_jsonl, score, write_json, write_jsonl  # noqa: E402
+from runkit import BIN, edit_candidate, pet, read_jsonl, score, write_json, write_jsonl  # noqa: E402
 
 import merge_candidates  # noqa: E402
 import runfiles  # noqa: E402
@@ -185,6 +185,20 @@ class MergeTest(unittest.TestCase):
         edit_candidate(self.run, "booking-search", "Hotel Casa Velarta", kind="apartment")
         report = merge_candidates.merge_run(self.run)
         self.assertEqual([c["name"] for c in report["kind_conflicts"]], ["Casa Velarta"])
+
+    # R14 pet flags: a policy with conditions stays visible, it is not folded into "unknown"
+    def test_restricted_pet_policy_is_kept(self):
+        edit_candidate(self.run, "curated-press", "Hotel Sombra", pet_policy=pet("restricted"))
+        merge_candidates.merge_run(self.run)
+        sombra = merged_by_name(self.run)["Hotel Sombra"]["pet_policy"]
+        self.assertEqual(sombra["value"], "restricted")
+        self.assertEqual(sombra["quotes"], ["Dogs: restricted"])
+
+    def test_restricted_and_allowed_disagree_into_unknown(self):
+        edit_candidate(self.run, "curated-press", "Casa Velarta", pet_policy=pet("allowed"))
+        edit_candidate(self.run, "booking-search", "Hotel Casa Velarta", pet_policy=pet("restricted"))
+        merge_candidates.merge_run(self.run)
+        self.assertEqual(merged_by_name(self.run)["Casa Velarta"]["pet_policy"]["value"], "unknown")
 
     def test_cli_writes_the_merged_file_and_prints_the_report(self):
         result = subprocess.run([sys.executable, str(BIN / "merge_candidates.py"), str(self.run)],

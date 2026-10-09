@@ -11,7 +11,7 @@
 <required_reading>
 **Read BEFORE recording:**
 1. `references/feedback-format.md` — recording format and rating scale
-2. `references/format-guide.md` — file-mode rule and `{city-slug}-{YYYY-MM}` folder convention
+2. `references/format-guide.md` — the `{city-slug}-{YYYY-MM}` trip-folder convention
 3. `{skill}/data/booking-history.md` — existing log
 4. `{skill}/data/taste-profile.md` — for rating context
 </required_reading>

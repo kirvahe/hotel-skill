@@ -97,6 +97,25 @@ class CheckOutputTest(unittest.TestCase):
         failures = check_output.check(self.run, text)
         self.assertTrue(any("Hotel Fantasma" in f and "ledger" in f for f in failures), failures)
 
+    # R22: every family and module carries a status, and the answer shows them
+    def test_a_family_without_a_status_fails(self):
+        families = read_json(self.run / "families.json")
+        del families["families"]["reddit"]
+        write_json(self.run / "families.json", families)
+        failures = check_output.check(self.run, self.answer())
+        self.assertIn("no status for research family reddit (R22)", failures)
+
+    def test_a_module_without_a_status_fails(self):
+        (self.run / "modules.json").unlink()
+        failures = check_output.check(self.run, self.answer())
+        self.assertIn("no status for module gmail (R22)", failures)
+
+    def test_an_answer_without_the_checks_report_fails(self):
+        text = self.answer()
+        cut = text.index(f"### {EN['report']}")
+        failures = check_output.check(self.run, text[:cut])
+        self.assertIn("the answer has no checks report (R22)", failures)
+
     def test_cli_exit_codes(self):
         good = self.answer()
         bad = add_entry(good, "20. **Hotel Ceniza**")

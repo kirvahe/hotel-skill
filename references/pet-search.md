@@ -1,4 +1,5 @@
 ## Contents
+- How a find-hotel run shows pet policy
 - The room-type trap
 - Welcome vs tolerate markers
 - Cross-reference rule — A/B/C tiers for pet-friendly claims
@@ -7,8 +8,24 @@
 - Anti-patterns
 
 <overview>
-Pet-friendly hotel protocol. If a pet is set in the user's `taste-profile.md` `## Pet` section, pet-friendly is a baseline filter on every trip by default — not a mode. This file is the lookup reference for the four traps that repeatedly cost tokens and user trust: room-type-level pet blocks, welcome-vs-tolerate confusion, single-source false positives, and pet-paradox cities.
+Pet-friendly hotel protocol. When the user's `taste-profile.md` `## Pet` section names a dog, find-hotel asks on every trip whether the dog travels (stage 1). When it does, pet policy is a filter for that trip. This file is the lookup reference for the four traps that repeatedly cost tokens and user trust: room-type-level pet blocks, welcome-vs-tolerate confusion, single-source false positives, and pet-paradox cities.
 </overview>
+
+<pipeline>
+## How a find-hotel run shows pet policy
+
+The fit filter (`bin/fit_filter.py`) reads the policy from the hotel's own site when the resolver or the final check recorded one, otherwise from the research sources. It removes a hotel only when the hotel as a whole takes no dogs; everything else stays, with a flag the user sees:
+
+| Policy | Flag |
+|---|---|
+| No source states one, or sources disagree | pet policy unknown |
+| Dogs with conditions (weight, fee, some rooms), quote shown | dogs allowed with conditions ❓ |
+| Allowed for the hotel, not confirmed for a room type ("hotel-level only") | dogs allowed, room type not confirmed ❓ |
+| The site names room types that take no dog | no dogs in some room types ❓ |
+| Allowed, with the room types the site names | no flag |
+
+The final check confirms the policy for the priced room type (`references/briefs/final-check.md`). A ❓ that survives it goes to the call scripts below before booking.
+</pipeline>
 
 <room_type_trap>
 ## The room-type trap
@@ -58,15 +75,13 @@ A "pet-friendly" claim must be confirmed by:
 - Marriott / Hyatt / IHG corporate pet policy page if the hotel is part of a brand whose policy is binding at property level (Autograph = usually yes, check)
 
 **B-tier (need two):**
-- Reddit thread with a specific trip report (not generic "is X pet-friendly?")
-- Pipper on Tour listing
+- Reddit thread with a specific trip report (not generic "is X pet-friendly?"), read in full
 - i-escape pet tag
-- TripAdvisor pet-specific review (only if quoted in full — do not trust aggregated labels)
 
 **C-tier (known false positives — never use alone):**
 - **BringFido** — observed to label tolerate-with-high-fee boutique hotels as "pet-friendly" without distinguishing welcome vs tolerate. Always cross-reference against A or B before trusting the label.
-- Generic pet travel blogs without trip reports
-- "Top 10 pet-friendly hotels in X" aggregator lists
+
+Pet travel blogs, "Top 10 pet-friendly hotels" lists, TripAdvisor and other banned sources (`references/search-sources.md`) are not used at all, not even as leads.
 
 **Rule:** If only C-tier sources support the pet-friendly claim → mark it as ❓ in the output, not ✅. Route to phone call before booking.
 </cross_reference_rule>
@@ -76,11 +91,11 @@ A "pet-friendly" claim must be confirmed by:
 
 Some cities have a structural mismatch: many boutique hotels, but few that allow dogs at the character-first tier the user wants. The first identified case surfaced in a small boutique-heavy coastal city in northern Spain: ~15 candidates evaluated, 0 pet-friendly matches at the taste-profile level after two search rounds.
 
-**Detection rule:** After the first 5 candidate hotels are evaluated, if the pet-friendly hit rate is **below 20%** (0 or 1 hits out of 5), stop and **tell the user explicitly**:
+**Detection rule:** At find-hotel stage 4, the filter prints `pet`: the policies of the hotels still in play. If dogs are allowed (with or without conditions) at **fewer than 20%** of them, and at least 5 hotels were evaluated, **tell the user explicitly** with the shortlist:
 
 > "City {X} is thin for pet + boutique + character. Hit rate after 5 candidates: {N}/5. Options: (a) expand to {adjacent city}, (b) loosen the character bar (not recommended), (c) fewer options in the shortlist, each hand-verified. Which do you prefer?"
 
-Do **not** quietly keep searching until you find 5. Do **not** lower the bar to pad the list. Bar-lowering picks that "technically allow pets" but miss character or charge grudging fees get rejected — better to shrink the shortlist than dilute it.
+Do **not** quietly start more research. Do **not** lower the bar to pad the list. Bar-lowering picks that "technically allow pets" but miss character or charge grudging fees get rejected — better to shrink the shortlist than dilute it.
 
 **Known pet-paradox cities:** start empty — add entries here as cases surface. Typical qualifying pattern: boutique-heavy coastal or old-town cities where pet-friendly × genuine-character overlap is <20% across 5 candidates. Record findings in the local per-city feedback files, not this reference.
 </pet_paradox_detection>

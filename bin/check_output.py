@@ -13,6 +13,9 @@ compares each with merged.jsonl, fit-rules.json and blacklist.json. Fails on:
     - a hotel entry without both a Booking link and a Google Maps link
     - an Airbnb entry (special format, or under an Airbnb heading) without
       "dates not verified" in any label language
+    - a research family or optional module with no ran / partial / skipped / failed
+      status in families.json or modules.json, or an answer without the checks
+      report (R22)
 
 "Skipped: ..." lines are not entries, so naming a blacklisted hotel there is fine.
 Prints OK, or one "FAIL: ..." line per problem. Exit 0 when clean, 1 on any failure.
@@ -31,6 +34,21 @@ ENTRY = re.compile(r"^(\d+)\.\s+\*\*(.+?)\*\*")
 BOOKING_LINK = re.compile(r"\]\(https?://([a-z0-9-]+\.)*booking\.com/[^)]*\)")
 MAPS_LINK = re.compile(r"\]\(https?://(www\.)?google\.[a-z.]+/maps/[^)]*\)")
 DATES_NOT_VERIFIED = tuple(labels["dates_not_verified"] for labels in render.LABELS.values())
+REPORT_HEADINGS = tuple(f"### {labels['report']}" for labels in render.LABELS.values())
+
+
+def report_failures(run_dir: Path, text: str) -> list:
+    failures = []
+    families = runfiles.optional_json(run_dir, runfiles.FAMILIES, {}).get("families") or {}
+    modules = runfiles.optional_json(run_dir, runfiles.MODULES, {}).get("modules") or {}
+    for kind, names, recorded in (("research family", render.FAMILIES, families),
+                                  ("module", runfiles.MODULES_ORDER, modules)):
+        for name in names:
+            if (recorded.get(name) or {}).get("status") not in runfiles.STATUSES:
+                failures.append(f"no status for {kind} {name} (R22)")
+    if not any(line.strip() in REPORT_HEADINGS for line in text.splitlines()):
+        failures.append("the answer has no checks report (R22)")
+    return failures
 
 
 def parse_entries(text: str) -> list:
@@ -81,7 +99,7 @@ def check(run_dir: Path, text: str) -> list:
         if score.get("verified") and score["value"] < floor and not rules["limited_choice"]:
             failures.append(f"{name}: Booking {score['value']} is below the {float(floor)} floor "
                             "and this city is not limited-choice")
-    return failures
+    return failures + report_failures(run_dir, text)
 
 
 def main(argv: list) -> int:

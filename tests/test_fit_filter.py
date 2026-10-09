@@ -13,7 +13,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "pipeline"
 sys.path.insert(0, str(FIXTURES))
 
 import runkit  # noqa: E402
-from runkit import BIN, edit_candidate, pet, read_json, score, write_json  # noqa: E402
+from runkit import BIN, edit_candidate, pet, read_json, read_jsonl, score, write_json, write_jsonl  # noqa: E402
 
 import fit_filter  # noqa: E402
 import merge_candidates  # noqa: E402
@@ -162,6 +162,82 @@ class FitFilterTest(unittest.TestCase):
         for c in removed:
             self.assertIn(c["reason_code"], fit_filter.REASON_CODES)
             self.assertTrue(c["skip_line"].startswith("Skipped: "), c)
+
+    # Stage 5: the resolver's judgment calls (R10 chain with character, judgment items of "do not recommend")
+    def resolve(self, name: str, *judgments):
+        write_json(self.run / "resolved.json", {"resolved": [{"candidate": name, "official_url": None,
+                                                              "judgments": list(judgments)}]})
+
+    def test_a_failed_judgment_removes_with_its_rule_and_reason(self):
+        self.resolve("Hotel Sombra", {"rule": "large or mainstream hotel", "verdict": "fail", "reason": "240 rooms",
+                                      "source_url": "https://curated-list.example/testgrad", "quote": "240 habitaciones"})
+        sombra = self.filtered()["Hotel Sombra"]
+        self.assertEqual((sombra["decision"], sombra["reason_code"]), ("remove", "judgment"))
+        self.assertEqual(sombra["skip_line"], "Skipped: profile judgment — Hotel Sombra — large or mainstream hotel: 240 rooms")
+
+    def test_a_passed_judgment_keeps_and_matches_any_name_variant(self):
+        self.resolve("Hotel Casa Velarta", {"rule": "chain with character", "verdict": "pass", "reason": "own building"})
+        self.assertEqual(self.filtered()["Casa Velarta"]["decision"], "keep")
+
+    def test_the_blacklist_reason_wins_over_a_judgment(self):
+        self.resolve("Hotel Ceniza", {"rule": "large or mainstream hotel", "verdict": "fail", "reason": "x",
+                                      "source_url": "https://a.example/", "quote": "x"})
+        self.assertEqual(self.filtered()["Hotel Ceniza"]["reason_code"], "blacklist")
+
+    # Pet policy from the hotel's own site (resolver and final check) and the ❓ flags
+    def pet_evidence(self, name: str, value: str, at: str = "2026-10-09T10:00:00+00:00", **extra):
+        records = read_jsonl(self.run / "evidence.jsonl")
+        records.append(dict({"candidate": name, "kind": "pet_policy", "source_url": "https://hotel.example/pets",
+                             "quote": f"official: {value}", "read_at": at, "value": value}, **extra))
+        write_jsonl(self.run / "evidence.jsonl", records)
+
+    def test_official_site_not_allowed_overrides_the_press(self):
+        self.set_dog(True)
+        edit_candidate(self.run, "curated-press", "Casa Velarta", pet_policy=pet("allowed"))
+        self.pet_evidence("Casa Velarta", "not allowed")
+        velarta = self.filtered()["Casa Velarta"]
+        self.assertEqual((velarta["decision"], velarta["reason_code"]), ("remove", "pet_not_allowed"))
+        self.assertIn("official: not allowed", velarta["skip_line"])
+
+    def test_hotel_level_allowed_is_flagged_until_the_room_type_is_confirmed(self):
+        self.set_dog(True)
+        edit_candidate(self.run, "curated-press", "Casa Velarta", pet_policy=pet("allowed"))
+        self.assertIn("pet_room_unconfirmed", self.filtered()["Casa Velarta"]["flags"])
+        self.pet_evidence("Casa Velarta", "allowed", room_types=["Doble Superior"])
+        flags = self.filtered()["Casa Velarta"]["flags"]
+        self.assertFalse([f for f in flags if f.startswith("pet_")], flags)
+
+    def test_hotel_level_only_from_the_final_check_is_flagged(self):
+        self.set_dog(True)
+        self.pet_evidence("Casa Velarta", "hotel-level only")
+        self.assertIn("pet_room_unconfirmed", self.filtered()["Casa Velarta"]["flags"])
+
+    def test_restricted_policy_is_kept_with_a_flag_and_its_quote(self):
+        self.set_dog(True)
+        self.pet_evidence("Hotel Sombra", "restricted", room_types=["Superior"])
+        sombra = self.filtered()["Hotel Sombra"]
+        self.assertEqual(sombra["decision"], "keep")
+        self.assertIn("pet_restricted", sombra["flags"])
+        self.assertEqual(sombra["pet"]["quote"], "official: restricted")
+
+    def test_not_allowed_in_some_room_types_keeps_with_a_flag(self):
+        self.set_dog(True)
+        self.pet_evidence("Hotel Sombra", "not allowed", room_types=["Deluxe"])
+        sombra = self.filtered()["Hotel Sombra"]
+        self.assertEqual(sombra["decision"], "keep")
+        self.assertIn("pet_room_not_allowed", sombra["flags"])
+
+    def test_the_latest_pet_evidence_wins(self):
+        self.set_dog(True)
+        self.pet_evidence("Hotel Sombra", "not allowed", at="2026-10-09T09:00:00+00:00")
+        self.pet_evidence("Hotel Sombra", "allowed", at="2026-10-09T12:00:00+00:00", room_types=["Superior"])
+        self.assertEqual(self.filtered()["Hotel Sombra"]["decision"], "keep")
+
+    def test_dog_at_home_ignores_pet_evidence(self):
+        self.pet_evidence("Hotel Sombra", "not allowed")
+        sombra = self.filtered()["Hotel Sombra"]
+        self.assertEqual(sombra["decision"], "keep")
+        self.assertFalse([f for f in sombra["flags"] if f.startswith("pet_")])
 
     # inputs
     def test_missing_fit_rules_is_a_clear_error(self):

@@ -1,77 +1,43 @@
 # {City Name}
 
-*City slug: {city-slug}*
-*Created: YYYY-MM-DD*
-*Updated: YYYY-MM-DD*
+Updated: YYYY-MM-DD
 
----
-
-## Slug rule (reference)
-
-City slug = lowercase, ASCII-fold (strip diacritics, transliterate ñ→n, ß→ss, ü→u), spaces→hyphens.
-
-Examples:
-- "Bilbao" → bilbao.md
-- "San Sebastián" → san-sebastian.md
-- "Palma de Mallorca" → palma-de-mallorca.md
-- "Nîmes" → nimes.md
-- "New York" → new-york.md
-
-One file per city. Files are created lazily — the first `/hotel` search for a city creates its cache. Do not pre-create empty stubs.
-
----
+<!-- City cache: one file per city, cities/{city-slug}.md. find-hotel creates and updates it
+     (bin/orchestrate.py through bin/citycache.py); you can also edit it by hand.
+     Slug rule: lowercase, ASCII-fold (ñ→n, ß→ss, ü→u), spaces→hyphens. "San Sebastián" → san-sebastian.md -->
 
 ## Searched
 
-<!-- One line per search/round: `YYYY-MM-DD R{N}: {query} → {outcome / file}` -->
+<!-- One line per find-hotel run: `- YYYY-MM-DD {trip}: {dates} · {guests} · {budget} · {dog} → {outcome}` -->
 
----
+## Sources
+
+<!-- The city's source map, reused by the research agents on the next trip (R3).
+     Family: curated-press, reddit or booking-search. Where: the outlet's URL, or the Booking search query.
+| curated-press | Diario Ejemplo | local press | es | https://diario.example/ | 5 | 2026-10-09 |
+-->
+
+| Family | Outlet | Kind | Language | Where | Yield | Last used |
+|---|---|---|---|---|---|---|
 
 ## Recommended
 
-<!-- Active picks. Table: Name | Type | Area | Rating | Notes
-e.g.
-| Hotel Foo Boutique | boutique | Old Town | 8.7 | LHW, anniversary anchor |
--->
+<!-- Hotels kept in a final answer, with the price found for that trip. -->
 
 | Name | Type | Area | Rating | Notes |
 |---|---|---|---|---|
-| | | | | |
 
----
+## Struck out
 
-## Mentioned section (researched, not selected)
+<!-- Hotels the user struck out at a checkpoint, with their reason verbatim (R15). They are shown,
+     not removed, on later trips: "Struck out before (date): reason". -->
 
-<!-- Candidates surfaced during research but not picked. Re-evaluate here before re-researching in later rounds.
-Table: Name | Type | Source/Context | Date -->
-
-| Name | Type | Source/Context | Date |
+| Name | Reason | Date | Trip |
 |---|---|---|---|
-| | | | |
-
----
 
 ## Excluded (with reason)
 
-<!-- Definitive exclusions. One line per hotel with a causal reason.
-Use the user's or companion's words verbatim, preserve original language.
-e.g.
-- Hotel Generic Chain — too corporate (wife: "no personality")
-- Hotel Tired Boutique — обшарпанный, ремонт 2008 года
--->
-
----
-
-<!-- Archived rounds appear here once Round 2+ happens. Example structure:
-
-## Round 1 — wife rejected: too corporate
-
-Searched: YYYY-MM-DD R1: "Bilbao boutique anniversary"
-Picks: Hotel A, Hotel B, Hotel C
-Outcome: All three rejected — too business-feel, wife wanted more character
-
-## Criteria changes
-
-R1→R2: dropped business hotels entirely, added "must have a story or unique building" filter
-
+<!-- Definitive exclusions: every later run removes these, like a blacklist. One line per hotel,
+     the user's or companion's words verbatim, original language kept. e.g.
+- Hotel Generic Chain — too corporate (partner: "no personality")
 -->

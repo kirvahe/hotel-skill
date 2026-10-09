@@ -22,7 +22,7 @@ Each merged record carries:
                   Booking score was found and every score found has the same value;
                   any difference counts (R23). Review counts are not compared.
     booking_url   the research's booking_url, else the first booking.com/hotel/ mention URL
-    pet_policy    {"value": "allowed" | "not allowed" | "unknown", "quotes"};
+    pet_policy    {"value": "allowed" | "not allowed" | "restricted" | "unknown", "quotes"};
                   sources that disagree make it "unknown"
     flags         "booking_only", "score_unverified"
 
@@ -40,7 +40,8 @@ import ledger
 import runfiles
 
 FAMILY_ORDER = ("curated-press", "reddit", "booking-search")
-PET_VALUES = {"allowed": "allowed", "yes": "allowed", "not allowed": "not allowed", "no": "not allowed"}
+PET_VALUES = {"allowed": "allowed", "yes": "allowed", "not allowed": "not allowed", "no": "not allowed",
+              "restricted": "restricted"}
 
 
 def _family_rank(path: Path) -> tuple:

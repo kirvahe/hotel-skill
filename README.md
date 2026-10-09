@@ -137,7 +137,9 @@ analyze my hotel preferences
 ~/.claude/skills/hotel/
   SKILL.md                          # Skill entry — routing, principles, no-fabrication rule
   workflows/
-    find-hotel.md                   # Search flow with multi-round persistence
+    find-hotel.md                   # Shared rules of the staged hotel search
+    find-hotel/                     # One file per stage: intake, context, research, filter,
+                                    #   availability, shortlist, final check, answer
     rate-stay.md                    # Phase 1 booking confirmation + Phase 2 post-stay review
     learn.md                        # Pattern analysis on H3-block stay entries (Peak / End / Disconfirm / Return aggregation)
   references/
@@ -146,13 +148,16 @@ analyze my hotel preferences
     feedback-format.md              # H3-block template, decimal rating granularity
     pet-search.md                   # Pet protocol — room-type trap, call scripts, pet-paradox detection
     occasion-taxonomy.md            # Six-occasion ranking modifiers and anti-patterns
+    briefs/                         # Research contract and one brief per agent
+  bin/                              # Scripts: run ledger, merge, fit filter, engine reader,
+                                    #   status table, links, render, output check, orchestrator
 
 ~/.claude/skills/hotel/data/        # Your data — path configured in the profile
   taste-profile.md                  # TOP-3, anchors, anti-patterns, references
   booking-history.md                # Peak / End / Disconfirm / Return blocks per stay
-  cities/{slug}.md                  # City caches — Searched / Recommended / Mentioned / Excluded
+  cities/{slug}.md                  # City caches — Searched / Sources / Recommended / Struck out / Excluded
   feedback/                         # Per-city blacklist + positive-reference files (written by rate-stay)
-  trips/{slug}-{YYYY-MM}/           # Per-trip shortlist and booking-confirmation artifacts
+  trips/{slug}-{YYYY-MM}/           # Per-trip run folder, saved answer and booking-confirmation artifacts
   recommendations/                  # Saved recommendation outputs
 ```
 
@@ -171,7 +176,9 @@ Default: city-break. Pet presence is a separate boolean filter applied across al
 
 ## Key mechanisms
 
-**Multi-round persistence.** Every city search creates or extends `cities/{slug}.md` with four canonical sections (Searched / Recommended / Mentioned / Excluded) plus archived Round-N blocks and a Criteria-changes log. A second `/hotel Lisbon` query never starts cold — it builds on the prior round, re-evaluates mentioned candidates against the new criteria, and never re-recommends an excluded one.
+**Staged search over a run folder.** A search runs in eight stages: one question (budget, dog, missing dates), context, three research agents in parallel (curated lists and local press, Reddit read in full, Booking search results), a mechanical profile filter, a check of each hotel's own website and booking engine, one shortlist where you strike out what you don't want or change the dates, budget or dog answer, a final price check, and the answer. Every stage reads and writes the run folder, so a run survives a context compaction or a new session, and a change at the shortlist re-runs only the checks.
+
+**City cache.** Every city search creates or extends `cities/{slug}.md`: the sources that worked (reused on the next trip), the hotels you kept, the ones you struck out with your reason, and definitive exclusions.
 
 **Reliability tiers A/B/C.** Sources are explicitly tiered. Every load-bearing claim about a hotel (renovation year, room count, owner identity, on-site spa) must trace to one A-tier source or two independent B-tier sources. Unsourced claims are marked with `❓` or trigger expanded search — never silently demoted.
 
@@ -181,11 +188,11 @@ Default: city-break. Pet presence is a separate boolean filter applied across al
 
 **Multi-language Reddit.** Local-only gems surface in local-language threads. The skill queries r/Euskadi in Euskara, r/catalunya in Catalan, r/italy in Italian, r/turkey in Turkish, and city-equivalents in Portuguese, Greek, and Japanese alongside English.
 
-**Operational verification.** Top-3 finalists pass two checks before output: a Booking.com availability call on the user's dates (no rooms across the calendar window = strong signal of renovation closure) and a 6-month press scan (`"{hotel}" renovation OR closed OR reopening`). Results render as `✓ verified open` / `⚠ availability check failed` / `⚠ press mentions renovation` / `❌ listing not found` in the summary table.
+**Availability on the hotel's own site.** Every hotel that passes the filter is checked for the trip dates on its own website and booking engine, in a browser with no visible window that signs into nothing. A hotel is removed only on positive evidence: a closure that overlaps the stay, or its own engine saying no rooms are left. An engine that cannot be read leaves the hotel in with ❓. Booking and Airbnb pages are never opened; Booking appears as a link with your dates, so you see your own Genius price.
 
-**Pet-friendly first-class.** The pet (small breed by default; configurable in taste-profile.md `## Pet config`) is a baseline parameter, not an occasion. Pet protocol handles the room-type trap (hotel pet-friendly but the booked room isn't), welcome-vs-tolerate distinction, pet-paradox detection (city has <20% pet-friendly hit rate), and ES + EN call scripts for confirmation. Explicit "couple-only" or "trip without the pet" signals flip `pet=false`.
+**Pet-friendly first-class.** When your profile's `## Pet` section names a dog, every search asks whether it travels on this trip. When it does, the pet protocol applies: the room-type trap (hotel pet-friendly but the booked room isn't), welcome vs tolerate, pet-paradox detection (fewer than 20% of the hotels in play take dogs), and ES + EN call scripts for confirmation.
 
-**Spain festivo calendar.** Trips into Spain cross-check dates against a maintained festivo + puente table. Intersections trigger a warning about price premium, non-refundable promo rates, and tightened cancellation windows before the recommendation cards appear.
+**Spain festivo calendar.** Trips into Spain cross-check dates against a maintained festivo + puente table. Intersections add a warning about price premium, non-refundable promo rates, and tightened cancellation windows to the answer's tips.
 
 ## Configuration
 

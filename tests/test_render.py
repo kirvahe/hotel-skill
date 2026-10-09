@@ -234,6 +234,133 @@ class RenderTest(unittest.TestCase):
         self.ready()
         self.assertEqual(render.render_answer(self.run, "en"), render.render_answer(self.run, "en"))
 
+    # Pet flags with ❓ (R14) and the policy quote
+    def test_pet_flags_show_the_conditions(self):
+        trip = read_json(self.run / "trip.json")
+        trip["dog"] = True
+        write_json(self.run / "trip.json", trip)
+        evidence = read_jsonl(self.run / "evidence.jsonl")
+        evidence.append({"candidate": "Hotel Sombra", "kind": "pet_policy", "source_url": "https://hotelsombra.example/pets",
+                         "quote": "Perros de hasta 8 kg, 20 € por noche", "read_at": "2026-10-09T10:00:00+00:00",
+                         "value": "restricted"})
+        evidence.append({"candidate": "Casa Velarta", "kind": "pet_policy", "source_url": "https://casavelarta.example/faq",
+                         "quote": "Admitimos mascotas", "read_at": "2026-10-09T10:00:00+00:00", "value": "hotel-level only"})
+        write_jsonl(self.run / "evidence.jsonl", evidence)
+        self.ready()
+        text = render.render_shortlist(self.run, "en")
+        sombra = block(text, "Hotel Sombra")
+        self.assertIn(EN["flag_pet_restricted"], sombra)
+        self.assertIn("Perros de hasta 8 kg", sombra)
+        self.assertIn(EN["flag_pet_room_unconfirmed"], block(text, "Casa Velarta"))
+        self.assertIn("❓", EN["flag_pet_room_unconfirmed"])
+
+    def test_failed_judgment_has_a_skip_line(self):
+        write_json(self.run / "resolved.json", {"resolved": [{"candidate": "Hotel Sombra", "judgments": [
+            {"rule": "large or mainstream hotel", "verdict": "fail", "reason": "240 rooms",
+             "source_url": "https://a.example/", "quote": "240"}]}]})
+        self.ready()
+        text = render.render_shortlist(self.run, "en")
+        self.assertNotIn("Hotel Sombra", entries(text))
+        self.assertIn("Skipped: fails a profile rule — Hotel Sombra — large or mainstream hotel: 240 rooms", text)
+
+    # Envelopes and the city cache reach the entries
+    def test_negative_reports_and_earlier_strike_outs_show_under_the_entry(self):
+        write_json(self.run / "research.json", {"source_map": [], "district_notes": [], "negative_reports": [
+            {"family": "reddit", "candidate": "Hotel Sombra", "url": "https://www.reddit.com/r/testgrad/comments/t3st09/x/c9/",
+             "quote": "the street is loud until 3am"}]})
+        write_json(self.run / "context.json", {"dog_note": "none", "cache": {"struck_out": [
+            {"name": "Casa Velarta", "reason": "too plain", "date": "2026-03-01", "trip": "testgrad-2026-04"}]}})
+        self.ready()
+        text = render.render_shortlist(self.run, "en")
+        self.assertIn("the street is loud until 3am", block(text, "Hotel Sombra"))
+        self.assertIn(EN["struck_before"].format(date="2026-03-01", reason="too plain"), block(text, "Casa Velarta"))
+
+    # The model's text (overview, why you, vibe, districts, tips) and the final check, in the answer only
+    def test_advice_and_final_check_details_are_in_the_answer_only(self):
+        write_json(self.run / "advice.json", {
+            "overview": "City-break pick in Testgrad — quiet old-town houses.",
+            "entries": [{"candidate": "Casa Velarta", "why": "a merchant house with twelve rooms", "vibe": "like your 8 anchor"}],
+            "districts": ["Old Quarter: quiet lanes, ten minutes on foot to everything"],
+            "tips": ["Book the courtyard rooms; the street side is noisy."]})
+        write_json(self.run / "final.json", {"final": [{"candidate": "Casa Velarta", "room_type": "Doble Superior",
+                                                        "rate": "Tarifa flexible",
+                                                        "cancellation": {"value": "free until 2026-11-18"}}]})
+        self.ready()
+        answer = render.render_answer(self.run, "en")
+        velarta = block(answer, "Casa Velarta")
+        self.assertIn(EN["why_you"].format(text="a merchant house with twelve rooms"), velarta)
+        self.assertIn(EN["vibe"].format(text="like your 8 anchor"), velarta)
+        self.assertIn("Doble Superior · Tarifa flexible", velarta)
+        self.assertIn(EN["cancellation"].format(text="free until 2026-11-18"), velarta)
+        write_json(self.run / "final.json", {"final": [
+            {"candidate": "Casa Velarta", "cancellation": {"value": "gratis hasta el 18/11", "deadline": "2026-11-18"}},
+            {"candidate": "Hotel Sombra", "cancellation": {"value": "unknown"}}]})
+        ru = render.LABELS["ru"]
+        answer_ru = render.render_answer(self.run, "ru")
+        self.assertIn(ru["cancellation"].format(text=ru["cancel_free_until"].format(date="2026-11-18")),
+                      block(answer_ru, "Casa Velarta"))
+        self.assertIn(ru["cancellation"].format(text=ru["cancel_unknown"]), block(answer_ru, "Hotel Sombra"))
+        self.assertIn("City-break pick in Testgrad", answer)
+        parts = sections(answer)
+        self.assertIn("Old Quarter", parts[EN["districts"]])
+        self.assertIn("courtyard rooms", parts[EN["tips"]])
+        shortlist = render.render_shortlist(self.run, "en")
+        self.assertNotIn("merchant house", shortlist)
+        self.assertNotIn(EN["districts"], sections(shortlist))
+
+    # R22: every family and module, ran / partial / skipped / failed
+    def test_report_lists_every_family_and_module(self):
+        write_json(self.run / "families.json", {"families": {
+            "curated-press": {"status": "ran", "reason": ""},
+            "reddit": {"status": "partial", "reason": "no Firecrawl: Reddit discovery by sub scans only"},
+            "booking-search": {"status": "failed", "reason": "no usable records"}}})
+        write_json(self.run / "modules.json", {"modules": {
+            "gmail": {"status": "skipped", "reason": "no Gmail tools in this session"},
+            "resolver": {"status": "ran", "reason": ""}, "reader": {"status": "skipped", "reason": "background browser not installed"}}})
+        self.ready()
+        report = sections(render.render_answer(self.run, "en"))[EN["report"]]
+        self.assertIn(f"{EN['family_reddit']}: {EN['status_partial']} — no Firecrawl", report)
+        self.assertIn(f"{EN['family_booking-search']}: {EN['status_failed']}", report)
+        self.assertIn(EN["history_skipped"], report)
+        self.assertIn(f"{EN['module_reader']}: {EN['status_skipped']} — background browser not installed", report)
+        self.assertIn(f"{EN['module_final_check']}: {EN['not_recorded']}", report)
+        self.assertIn(EN["report"], sections(render.render_shortlist(self.run, "en")))
+
+    def test_script_reasons_follow_the_request_language(self):
+        write_json(self.run / "modules.json", {"modules": {
+            "reader": {"status": "skipped", "reason": "background browser not installed", "why": [{"code": "reader_missing"}]},
+            "resolver": {"status": "ran", "reason": "read 4 engines"}}})
+        self.ready()
+        ru = render.LABELS["ru"]
+        report = sections(render.render_answer(self.run, "ru"))[ru["report"]]
+        self.assertIn(ru["why_reader_missing"], report)
+        self.assertNotIn("background browser", report)
+        self.assertNotIn("read 4 engines", report)
+
+    # The checkpoint through the question tool: at most 4 questions of 2 to 4 options
+    def test_question_payload_splits_the_entries(self):
+        self.ready()
+        options = render.question_options(self.run, "en")
+        payload = render.question_payload(self.run, "en")
+        self.assertEqual(payload["mode"], "question")
+        sizes = [len(q["options"]) for q in payload["questions"]]
+        self.assertEqual(sum(sizes), len(options))
+        self.assertTrue(all(2 <= n <= 4 for n in sizes), sizes)
+        self.assertLessEqual(len(sizes), 4)
+        labels = [o["label"] for q in payload["questions"] for o in q["options"]]
+        self.assertEqual(labels, [o["label"] for o in options])
+        for q in payload["questions"]:
+            self.assertTrue(q["multiSelect"])
+            self.assertLessEqual(len(q["header"]), 12)
+        self.assertEqual(payload["text"], render.render_shortlist(self.run, "en"))
+
+    def test_question_payload_falls_back_to_a_plain_reply(self):
+        self.ready()
+        self.assertEqual(render.chunk_sizes(1), [])
+        self.assertEqual(render.chunk_sizes(17), [])
+        self.assertEqual(render.chunk_sizes(5), [3, 2])
+        self.assertEqual(render.chunk_sizes(13), [4, 3, 3, 3])
+
     def test_cli_renders_shortlist_options_and_answer(self):
         self.ready()
         for args in (["shortlist"], ["options"], ["answer", "--lang", "ru"]):

@@ -7,13 +7,13 @@ Layout (inside the user's data folder):
         candidates-{family}.jsonl  one candidate record per line, one file per research family
         envelope-{family}.json     the family agent's status report
         evidence.jsonl             availability, closure, pet and scarcity evidence
-        state.json                 current stage, families still running, history
+        state.json                 current stage, agents still running, history
         (later stages add more files; bin/runfiles.py lists them all)
 
 Usage:
     python3 ledger.py init --data DIR --city NAME --check-in YYYY-MM-DD --check-out YYYY-MM-DD
                            --guests N --budget-min EUR --budget-max EUR --dog yes|no
-    python3 ledger.py validate FILE --kind candidate|evidence|trip|envelope|state
+    python3 ledger.py validate FILE --kind candidate|evidence|trip|envelope|state|resolved|final|gmail
     python3 ledger.py state RUN_DIR [--set STAGE] [--waiting fam1,fam2]
     python3 ledger.py slug "City name"
 
@@ -35,6 +35,9 @@ STAGES = ("intake", "context", "research", "filter", "availability", "shortlist"
 EVIDENCE_KINDS = ("engine_price", "engine_no_rooms", "engine_unreadable", "closure", "pet_policy", "scarcity")
 ENGINE_KINDS = ("engine_price", "engine_no_rooms")
 PRICE_BASES = ("per_night", "unknown")
+PET_EVIDENCE_VALUES = ("allowed", "not allowed", "restricted", "hotel-level only")
+VERDICTS = ("pass", "fail")
+OTA_DOMAINS = ("booking.com", "airbnb.")
 BANNED_DOMAINS = ("tripadvisor.", "yelp.", "instagram.com")
 REDDIT_PERMALINK = re.compile(r"reddit\.com/r/[^/]+/comments/[^/]+")
 CYRILLIC = {
@@ -114,6 +117,77 @@ def validate_evidence(record: dict) -> list[str]:
         errors.append("engine_price needs a numeric price_eur")
     if "price_basis" in record and record["price_basis"] not in PRICE_BASES:
         errors.append(f"price_basis must be one of {', '.join(PRICE_BASES)}")
+    if record.get("kind") == "pet_policy":
+        if record.get("value") not in PET_EVIDENCE_VALUES:
+            errors.append(f"pet_policy value must be one of {', '.join(PET_EVIDENCE_VALUES)}")
+        if "room_types" in record and not (isinstance(record["room_types"], list)
+                                           and all(isinstance(r, str) for r in record["room_types"])):
+            errors.append("room_types must be a list of room-type names")
+    return errors
+
+
+def validate_resolved(record: dict) -> list[str]:
+    """One line of resolved-{batch}.jsonl: the resolver's official site and judgment calls."""
+    errors = [] if record.get("candidate") else ["no candidate name"]
+    official = record.get("official_url")
+    if official is not None:
+        if not isinstance(official, dict) or not str(official.get("value", "")).startswith(("http://", "https://")):
+            errors.append("official_url must be null or {value: an http(s) URL, source_url, quote}")
+        else:
+            errors += _source_errors(official, "official_url")
+            if any(domain in official["value"].lower() for domain in OTA_DOMAINS):
+                errors.append("official_url: a Booking or Airbnb page is not the hotel's own site")
+    judgments = record.get("judgments", [])
+    if not isinstance(judgments, list):
+        return errors + ["judgments must be a list"]
+    for n, judgment in enumerate(judgments, 1):
+        where = f"judgment {n}"
+        if not judgment.get("rule"):
+            errors.append(f"{where}: no rule")
+        if judgment.get("verdict") not in VERDICTS:
+            errors.append(f"{where}: verdict must be pass or fail")
+        if not judgment.get("reason"):
+            errors.append(f"{where}: no reason")
+        if judgment.get("verdict") == "fail":
+            errors += _source_errors(judgment, f"{where} (a fail needs a quoted source)")
+    return errors
+
+
+def validate_final(record: dict) -> list[str]:
+    """One line of final-{batch}.jsonl: the rate the final check priced and its cancellation terms."""
+    errors = [] if record.get("candidate") else ["no candidate name"]
+    for field in ("room_type", "rate"):
+        if field in record and not isinstance(record[field], str):
+            errors.append(f"{field} must be text")
+    cancellation = record.get("cancellation")
+    if cancellation is not None:
+        if not isinstance(cancellation, dict) or not cancellation.get("value"):
+            errors.append("cancellation must be {value, deadline, source_url, quote}")
+        else:
+            if cancellation["value"] != "unknown":
+                errors += _source_errors(cancellation, "cancellation")
+            if cancellation.get("deadline") and not _is_date(cancellation["deadline"]):
+                errors.append("cancellation deadline must be YYYY-MM-DD")
+    return errors
+
+
+def validate_gmail(record: dict) -> list[str]:
+    """gmail-bookings.json: Booking confirmations the read-only Gmail agent found."""
+    errors = []
+    if record.get("status") not in ("complete", "partial", "failed"):
+        errors.append("status must be complete, partial or failed")
+    elif record["status"] != "complete" and not record.get("reason"):
+        errors.append("reason is required for partial and failed")
+    bookings = record.get("bookings")
+    if not isinstance(bookings, list):
+        return errors + ["bookings must be a list"]
+    for n, booking in enumerate(bookings, 1):
+        if not booking.get("hotel"):
+            errors.append(f"booking {n}: no hotel")
+        if not _is_date(booking.get("check_in")):
+            errors.append(f"booking {n}: check_in must be YYYY-MM-DD")
+        if booking.get("check_out") and not _is_date(booking["check_out"]):
+            errors.append(f"booking {n}: check_out must be YYYY-MM-DD")
     return errors
 
 
@@ -155,6 +229,9 @@ VALIDATORS = {
     "trip": validate_trip,
     "envelope": validate_envelope,
     "state": validate_state,
+    "resolved": validate_resolved,
+    "final": validate_final,
+    "gmail": validate_gmail,
 }
 
 

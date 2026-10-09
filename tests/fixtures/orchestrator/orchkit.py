@@ -1,0 +1,94 @@
+"""Builds a throwaway data folder and find-hotel run for the orchestrator tests.
+
+Every hotel, city, rating, dog and trip here is made up. The run reuses the
+pipeline fixture's candidates (tests/fixtures/pipeline/runkit.py lists them);
+the files in agents/ stand in for what the research, resolver, final-check and
+Gmail agents write, and engines/ holds saved booking-engine pages for the reader.
+"""
+from __future__ import annotations
+
+import json
+import re
+import shutil
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+REPO = HERE.parent.parent.parent
+BIN = REPO / "bin"
+PIPELINE = HERE.parent / "pipeline"
+AGENTS = HERE / "agents"
+ENGINES = HERE / "engines"
+CONTRACT = REPO / "references" / "briefs" / "research-contract.md"
+if str(BIN) not in sys.path:
+    sys.path.insert(0, str(BIN))
+
+TASTE = {"taste_summary": "small hotels with character in historic buildings, lively neighbourhoods, "
+                          "personal service; no large chains",
+         "judgment_rules": ["large or mainstream hotel (over about 60 rooms)"]}
+TRIP = dict(city="Testgrad", country="Testland", languages="A = Spanish, B = English, C = none", lang="en",
+            check_in="2026-11-20", check_out="2026-11-22", guests=2, budget_max=200, dog=False, occasion="city-break")
+FAMILIES = ("curated-press", "reddit", "booking-search")
+
+
+def make_data(tmp) -> Path:
+    """DATA/ with a filled profile, the history, the feedback files and a warm Testgrad cache."""
+    data = Path(tmp) / "data"
+    (data / "cities").mkdir(parents=True)
+    shutil.copy(HERE / "profile.md", data / "taste-profile.md")
+    shutil.copy(PIPELINE / "stays-history.md", data / "booking-history.md")
+    shutil.copytree(PIPELINE / "blacklist-feedback", data / "feedback")
+    shutil.copy(HERE / "city-cache-testgrad.md", data / "cities" / "testgrad.md")
+    return data
+
+
+def approved_contract(tmp) -> Path:
+    """The real contract with every "set at approval" placeholder filled with a synthetic test value.
+
+    The value 7 is a test stand-in, not a proposal: the real caps await the user's approval.
+    """
+    text = re.sub(r"\{[^{}]*— set at approval\}", "7", CONTRACT.read_text(encoding="utf-8"))
+    path = Path(tmp) / "contract-approved.md"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def write_inputs(run: Path) -> None:
+    """What the model writes at stage 2 from the profile: the fit rules and the brief inputs."""
+    shutil.copy(PIPELINE / "run" / "fit-rules.json", run / "fit-rules.json")
+    (run / "taste.json").write_text(json.dumps(TASTE, ensure_ascii=False), encoding="utf-8")
+
+
+def research_outputs(run: Path, invalid_reddit: bool = False) -> None:
+    """What the three family agents write: candidate files and envelope files."""
+    for family in FAMILIES:
+        shutil.copy(PIPELINE / "run" / f"candidates-{family}.jsonl", run / f"candidates-{family}.jsonl")
+        shutil.copy(AGENTS / f"envelope-{family}.json", run / f"envelope-{family}.json")
+    if invalid_reddit:
+        with open(run / "candidates-reddit.jsonl", "a", encoding="utf-8") as handle:
+            handle.write((AGENTS / "invalid-reddit-line.jsonl").read_text(encoding="utf-8"))
+
+
+def agent_files(run: Path, *names: str) -> None:
+    """Copy agent output files into the run. Final-check evidence is stamped one minute from now,
+    so it is newer than the reader's own reads whatever day the tests run on."""
+    later = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat(timespec="seconds")
+    for name in names:
+        if name.startswith("evidence-final-"):
+            records = [dict(r, read_at=later) for r in read_jsonl(AGENTS / name)]
+            (run / name).write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records), encoding="utf-8")
+        else:
+            shutil.copy(AGENTS / name, run / name)
+
+
+def read_json(path: Path):
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def write_json(path: Path, data) -> None:
+    Path(path).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def read_jsonl(path: Path) -> list:
+    return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]

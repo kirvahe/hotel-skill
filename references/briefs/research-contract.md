@@ -37,6 +37,8 @@ Your prompt gives a value for each placeholder below. Use that value wherever th
 
 Values written as `{… — set at approval}` are placeholders. The user approves the numbers, and your prompt gives them. If your prompt gives no number for a cap that applies to you, do not start: write a final message with status `failed` and reason `caps not set`.
 
+When the user approves a value, it replaces its placeholder in this table (and the credit floor in Tool route, step 1). `bin/orchestrate.py` reads the caps from here and starts no agent while a placeholder it needs remains.
+
 | Agent | Search calls (query cap) | Page reads (fetch cap) | Other |
 |---|---|---|---|
 | curated-press | `{query cap — set at approval}` | `{fetch cap — set at approval}` | |

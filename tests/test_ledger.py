@@ -63,10 +63,109 @@ class EvidenceValidationTest(unittest.TestCase):
         self.assertTrue(any("price_basis" in e for e in errors), errors)
 
 
+class PetEvidenceTest(unittest.TestCase):
+    RECORD = {"candidate": "Hotel Test", "kind": "pet_policy", "source_url": "https://hotel.example/pets",
+              "quote": "Dogs up to 8 kg in Superior rooms", "read_at": "2026-10-08T10:00:00+00:00",
+              "value": "restricted", "room_types": ["Superior"]}
+
+    def test_the_four_brief_values_pass(self):
+        for value in ("allowed", "not allowed", "restricted", "hotel-level only"):
+            self.assertEqual(ledger.validate_evidence(dict(self.RECORD, value=value)), [], value)
+
+    def test_other_values_fail(self):
+        errors = ledger.validate_evidence(dict(self.RECORD, value="yes"))
+        self.assertTrue(any("value" in e for e in errors), errors)
+
+    def test_room_types_must_be_a_list(self):
+        errors = ledger.validate_evidence(dict(self.RECORD, room_types="Superior"))
+        self.assertTrue(any("room_types" in e for e in errors), errors)
+
+
+class ResolvedValidationTest(unittest.TestCase):
+    RECORD = {"candidate": "Casa del Ejemplo",
+              "official_url": {"value": "https://casadelejemplo.example/", "source_url": "https://casadelejemplo.example/contacto",
+                               "quote": "Casa del Ejemplo · Calle Mayor 1 · Testgrad"},
+              "judgments": [{"rule": "chain with character", "verdict": "pass", "reason": "its own design",
+                             "source_url": "https://diario.example/hoteles", "quote": "un palacete rehabilitado"}]}
+
+    def test_brief_example_passes(self):
+        self.assertEqual(ledger.validate_resolved(self.RECORD), [])
+
+    def test_no_official_url_is_null(self):
+        self.assertEqual(ledger.validate_resolved(dict(self.RECORD, official_url=None, judgments=[])), [])
+
+    def test_official_url_on_booking_or_airbnb_fails(self):
+        for url in ("https://www.booking.com/hotel/xx/casa.html", "https://www.airbnb.es/rooms/1"):
+            record = dict(self.RECORD, official_url=dict(self.RECORD["official_url"], value=url))
+            self.assertTrue(any("official_url" in e for e in ledger.validate_resolved(record)), url)
+
+    def test_a_fail_verdict_needs_a_quote_and_a_reason(self):
+        judgment = {"rule": "large or mainstream hotel", "verdict": "fail", "reason": "240 rooms"}
+        errors = ledger.validate_resolved(dict(self.RECORD, judgments=[judgment]))
+        self.assertTrue(any("quote" in e for e in errors), errors)
+        judgment = {"rule": "large or mainstream hotel", "verdict": "maybe", "reason": "x"}
+        errors = ledger.validate_resolved(dict(self.RECORD, judgments=[judgment]))
+        self.assertTrue(any("verdict" in e for e in errors), errors)
+
+    def test_a_pass_without_evidence_is_fine(self):
+        judgment = {"rule": "chain with character", "verdict": "pass", "reason": "no evidence either way"}
+        self.assertEqual(ledger.validate_resolved(dict(self.RECORD, judgments=[judgment])), [])
+
+
+class FinalValidationTest(unittest.TestCase):
+    RECORD = {"candidate": "Casa del Ejemplo", "room_type": "Doble Superior", "rate": "Tarifa flexible",
+              "cancellation": {"value": "free until 2027-01-13", "deadline": "2027-01-13",
+                               "source_url": "https://casadelejemplo.example/condiciones",
+                               "quote": "Cancelación gratuita hasta 2 días antes de la llegada."}}
+
+    def test_brief_example_passes(self):
+        self.assertEqual(ledger.validate_final(self.RECORD), [])
+
+    def test_unknown_cancellation_needs_no_source(self):
+        self.assertEqual(ledger.validate_final(dict(self.RECORD, cancellation={"value": "unknown"})), [])
+
+    def test_stated_cancellation_needs_a_quote(self):
+        errors = ledger.validate_final(dict(self.RECORD, cancellation={"value": "free until 2027-01-13"}))
+        self.assertTrue(any("cancellation" in e for e in errors), errors)
+
+    def test_bad_deadline_fails(self):
+        cancellation = dict(self.RECORD["cancellation"], deadline="13/01/2027")
+        errors = ledger.validate_final(dict(self.RECORD, cancellation=cancellation))
+        self.assertTrue(any("deadline" in e for e in errors), errors)
+
+
+class GmailValidationTest(unittest.TestCase):
+    RECORD = {"status": "complete", "mailbox": "personal", "reason": "",
+              "bookings": [{"hotel": "Casa del Ejemplo", "city": "Testgrad", "check_in": "2025-05-02",
+                            "check_out": "2025-05-04", "message_date": "2025-03-01"}]}
+
+    def test_valid_file_passes(self):
+        self.assertEqual(ledger.validate_gmail(self.RECORD), [])
+
+    def test_failed_status_needs_a_reason(self):
+        errors = ledger.validate_gmail({"status": "failed", "bookings": []})
+        self.assertTrue(any("reason" in e for e in errors), errors)
+
+    def test_booking_needs_a_hotel_and_a_check_in_date(self):
+        errors = ledger.validate_gmail(dict(self.RECORD, bookings=[{"hotel": "", "check_in": "May 2025"}]))
+        self.assertTrue(any("hotel" in e for e in errors), errors)
+        self.assertTrue(any("check_in" in e for e in errors), errors)
+
+    def test_cli_validates_the_new_kinds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "resolved-1.jsonl"
+            path.write_text(json.dumps(ResolvedValidationTest.RECORD) + "\n{\"candidate\": \"\"}\n", encoding="utf-8")
+            result = subprocess.run([sys.executable, str(BIN / "ledger.py"), "validate", str(path), "--kind", "resolved"],
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("line 2", result.stdout)
+            self.assertNotIn("line 1", result.stdout)
+
+
 class SlugTest(unittest.TestCase):
     def test_cyrillic_and_latin_names_share_a_slug(self):
-        self.assertEqual(ledger.city_slug("Гранада"), "granada")
-        self.assertEqual(ledger.city_slug("Granada"), "granada")
+        self.assertEqual(ledger.city_slug("Лиссабон"), "lissabon")
+        self.assertEqual(ledger.city_slug("Lissabon"), "lissabon")
 
     def test_accents_and_spaces(self):
         self.assertEqual(ledger.city_slug("San Sebastián"), "san-sebastian")

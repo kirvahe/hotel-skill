@@ -10,8 +10,10 @@ Reads from RUN_DIR:
     fit-rules.json  written once per run by the model from the taste profile:
                     {"floor": 8.0, "limited_choice": false,
                      "do_not_recommend": ["Chain name", ...], "excluded_kinds": ["apartment", "bnb"]}
-    blacklist.json  the output of blacklist.py, saved as is
-    stays.json      the output of stays.py, saved as is
+    blacklist.json  the output of blacklist.py (plus the city cache's Excluded rows)
+    stays.json      the output of stays.py (plus Gmail bookings)
+    resolved.json   optional: the resolver's lines {"resolved": [{"candidate", "judgments"}]}
+    evidence.jsonl  optional: pet_policy evidence from the hotel's own site (resolver, final check)
 
 Checks, in this order; the first that fails removes the candidate with a reason
 code and a "Skipped: ..." line:
@@ -19,10 +21,19 @@ code and a "Skipped: ..." line:
     excluded_kind    its kind is in excluded_kinds (apartments and B&Bs leave the list)
     dnr_chain        a do_not_recommend chain name appears as whole words in its name;
                      other chains pass (R10: the "chain with character" call is the model's)
-    pet_not_allowed  the dog travels and its pet policy is "not allowed" (AE5);
-                     an unknown policy keeps it with the "pet_unknown" flag
+    judgment         the resolver judged a rule "fail", with a quoted reason (R10, the
+                     judgment items of the "do not recommend" list)
+    pet_not_allowed  the dog travels and the hotel as a whole does not take dogs (AE5)
     below_floor      a verified Booking score below the floor; in a limited-choice city it
                      stays with the "below_floor" flag (R9). An unverified score never removes (R23).
+
+Pet policy, only when the dog travels: the latest pet_policy evidence from the hotel's
+own site wins over what research sources said. Kept candidates get a flag:
+    pet_unknown           no source states a policy, or sources disagree
+    pet_restricted        dogs with conditions (weight, fee, some rooms): the quote is shown
+    pet_room_unconfirmed  allowed for the hotel, not confirmed for a room type ("hotel-level only")
+    pet_room_not_allowed  the site names room types that take no dog
+    (none)                allowed, with the room types the site names
 
 Special formats (kind "special-format") go to the Airbnb block (R19): they skip
 the chain and floor checks. Past stays in the same city attach their rating,
@@ -38,15 +49,18 @@ from pathlib import Path
 
 import ledger
 import runfiles
+import status_table
 
-REASON_CODES = ("blacklist", "excluded_kind", "dnr_chain", "pet_not_allowed", "below_floor")
+REASON_CODES = ("blacklist", "excluded_kind", "dnr_chain", "judgment", "pet_not_allowed", "below_floor")
 SKIP_TEXT = {
     "blacklist": "blacklist",
     "excluded_kind": "excluded kind",
     "dnr_chain": "do-not-recommend chain",
+    "judgment": "profile judgment",
     "pet_not_allowed": "dogs not allowed",
     "below_floor": "below the {floor} floor",
 }
+PET_FLAGS = ("pet_unknown", "pet_restricted", "pet_room_unconfirmed", "pet_room_not_allowed")
 
 
 def floor_text(floor) -> str:
@@ -85,7 +99,33 @@ def _chain_hit(names: list, chains: list):
     return None
 
 
-def judge(candidate: dict, *, trip: dict, rules: dict, blacklist: list, stays: list) -> dict:
+def pet_view(candidate: dict, evidence: list) -> dict:
+    """The pet policy that counts: the latest official-site evidence, else the merged research view."""
+    records = [e for e in evidence if e.get("kind") == "pet_policy"]
+    if records:
+        latest = max(records, key=lambda e: str(e.get("read_at", "")))
+        return {"value": latest["value"], "quote": latest.get("quote", ""), "room_types": latest.get("room_types") or [],
+                "source_url": latest.get("source_url", ""), "official": True}
+    merged = candidate.get("pet_policy") or {"value": "unknown", "quotes": []}
+    return {"value": merged.get("value", "unknown"), "quote": "; ".join(q for q in merged.get("quotes", []) if q),
+            "room_types": [], "source_url": "", "official": False}
+
+
+def pet_flag(pet: dict):
+    value, rooms = pet["value"], pet["room_types"]
+    if value == "not allowed":
+        return "pet_room_not_allowed" if rooms else None
+    if value == "allowed":
+        return None if rooms else "pet_room_unconfirmed"
+    if value == "hotel-level only":
+        return "pet_room_unconfirmed"
+    if value == "restricted":
+        return "pet_restricted"
+    return "pet_unknown"
+
+
+def judge(candidate: dict, *, trip: dict, rules: dict, blacklist: list, stays: list,
+          resolved: list = (), evidence: list = ()) -> dict:
     keys = runfiles.record_keys(candidate)
     city = runfiles.city_key(candidate.get("city"), trip["city_slug"])
 
@@ -104,7 +144,8 @@ def judge(candidate: dict, *, trip: dict, rules: dict, blacklist: list, stays: l
     hit = next((row for row in blacklist
                 if same_city(row.get("city")) and runfiles.name_key(row.get("hotel", "")) in keys), None)
     chain = _chain_hit([candidate["name"]] + candidate.get("aliases", []), rules["do_not_recommend"])
-    pet = candidate.get("pet_policy") or {"value": "unknown", "quotes": []}
+    failed = next((j for line in resolved for j in line.get("judgments") or [] if j.get("verdict") == "fail"), None)
+    pet = pet_view(candidate, evidence)
     score = candidate.get("score") or {"verified": False, "value": None}
     below = score.get("verified") and score["value"] < floor
 
@@ -114,19 +155,24 @@ def judge(candidate: dict, *, trip: dict, rules: dict, blacklist: list, stays: l
         removal = ("excluded_kind", candidate["kind"])
     elif block == "hotels" and chain:
         removal = ("dnr_chain", chain)
-    elif trip["dog"] and pet["value"] == "not allowed":
-        removal = ("pet_not_allowed", "; ".join(q for q in pet["quotes"] if q))
+    elif failed:
+        removal = ("judgment", f"{failed.get('rule', '')}: {failed.get('reason', '')}")
+    elif trip["dog"] and pet["value"] == "not allowed" and not pet["room_types"]:
+        removal = ("pet_not_allowed", pet["quote"])
     elif block == "hotels" and below and not rules["limited_choice"]:
         removal = ("below_floor", f"Booking {score['value']}")
     if not removal:
-        if trip["dog"] and pet["value"] == "unknown":
-            flags.append("pet_unknown")
+        flag = pet_flag(pet) if trip["dog"] else None
+        if flag:
+            flags.append(flag)
         if block == "hotels" and below:
             flags.append("below_floor")
 
     result = {"id": candidate["id"], "name": candidate["name"], "block": block,
               "decision": "remove" if removal else "keep", "flags": flags,
               "reason_code": None, "reason": "", "skip_line": "", "past_stays": past_stays}
+    if trip["dog"]:
+        result["pet"] = pet
     if removal:
         code, detail = removal
         result.update(reason_code=code, reason=detail,
@@ -145,8 +191,12 @@ def filter_run(run_dir: Path) -> dict:
                                "save the output of stays.py booking-history.md there first")
     if not isinstance(blacklist.get("blacklist"), list) or not isinstance(stays.get("stays"), list):
         raise runfiles.RunError("blacklist.json and stays.json must be the outputs of blacklist.py and stays.py")
+    resolved_lines = runfiles.optional_json(run_dir, runfiles.RESOLVED, {"resolved": []}).get("resolved", [])
+    resolved, _ = runfiles.match_by_name(merged, resolved_lines)
+    evidence, _ = runfiles.match_by_name(merged, status_table.read_evidence(run_dir)[0])
 
-    results = [judge(c, trip=trip, rules=rules, blacklist=blacklist["blacklist"], stays=stays["stays"])
+    results = [judge(c, trip=trip, rules=rules, blacklist=blacklist["blacklist"], stays=stays["stays"],
+                     resolved=resolved[c["id"]], evidence=evidence[c["id"]])
                for c in merged]
     out = {
         "trip": {key: trip[key] for key in ("city", "check_in", "check_out", "dog")},

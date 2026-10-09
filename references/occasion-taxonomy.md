@@ -1,6 +1,6 @@
 ---
 name: occasion-taxonomy
-description: Six-occasion taxonomy for hotel search. Occasion is a first-class input that changes ranking modifiers; inferred in Step 1 of find-hotel.md. Pet presence is a separate boolean filter applied across all occasions.
+description: Six-occasion taxonomy for hotel search. Occasion is a first-class input that changes ranking modifiers; inferred at find-hotel stage 1. Whether the dog travels is a separate per-trip answer that applies across all occasions.
 ---
 
 # Occasion Taxonomy — Hotels
@@ -13,7 +13,7 @@ description: Six-occasion taxonomy for hotel search. Occasion is a first-class i
 
 The same person has radically different hotel needs depending on the occasion. A "ski trip in Andermatt" and a "concert weekend in Lisbon" cannot share the same ranking function, even for the same traveler. This taxonomy makes occasion a first-class input to ranking — composed into the candidate score, not applied as a downstream filter.
 
-Occasion is inferred in **Step 1 of `workflows/find-hotel.md`**, propagates through `continuation_state`, and is surfaced in the **Overview line** per `references/format-guide.md`.
+Occasion is inferred at **find-hotel stage 1** (`workflows/find-hotel/1-intake.md`) and never asked. It is saved with the trip (`orchestrate.py start --occasion`), reaches the research agents through the taste summary written at stage 2, and is surfaced in the **overview line** per `references/format-guide.md`.
 
 ## The Six Occasions
 
@@ -116,13 +116,7 @@ Anchor: see your `taste-profile.md` `## Occasion anchors` for the new-country-ex
 
 ## Pet parameter
 
-If a pet is set in the user's `taste-profile.md` `## Pet` section, it's a **baseline boolean filter**, not an occasion. Most trips include the pet by default but **not all** — couple-only travel happens (anniversaries, concerts in cities where the pet stays home, hard-to-reach destinations).
-
-When `pet=true` in the Step 1 parse, apply pet-friendly rules from `references/pet-search.md` across whichever occasion was inferred — pet-friendly filter, pet-paradox warning at <20% hit rate, ✅/⚠️/❓/❌ notation in the response. When `pet=false`, no pet-search overhead — the occasion's modifiers run alone.
-
-Both states are valid for any occasion. The Step 1 echo line surfaces both — `Proceeding as {occasion} trip with pet={true|false}. Correct me before Step 4 if wrong.` (declarative, non-blocking) — so the user can interject if either inference is wrong.
-
-If no pet is set in `taste-profile.md`, the pet line is omitted from the echo and pet filters never run.
+The dog is not an occasion. When the user's `taste-profile.md` `## Pet` section names one, stage 1 asks in its one question whether the dog travels on this trip; couple-only trips (anniversaries, concerts, hard-to-reach places) are common. When it travels, the pet rules in `references/pet-search.md` apply on top of whichever occasion was inferred: the pet filter, the pet-paradox warning, the pet flags in the shortlist. When it does not, the occasion's modifiers run alone. When the profile names no pet, nothing is asked and pet rules never run.
 
 ## Inference defaults
 
