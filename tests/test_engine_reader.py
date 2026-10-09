@@ -4,13 +4,16 @@ Every hotel, engine and URL here is made up. No test reaches the web. Saved page
 tests/fixtures/engines/ are read by the HTML parser (fixture mode) or, when Playwright is
 installed, by headless Chromium opening the saved file through a file:// URL.
 """
+import contextlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
 from datetime import date
 from pathlib import Path
@@ -110,6 +113,25 @@ class FixtureModeTest(unittest.TestCase):
         self.assertEqual(record["quote"], "175.50 € × 2 nights")
         self.assertEqual((record["dates_shown"]["check_in"], record["dates_shown"]["check_out"]),
                          ("2026-11-20", "2026-11-22"))
+
+    def test_sold_out_page_with_a_parking_line_yields_no_rooms(self):
+        # Review #2, reproduced: the parking line was read as an available room at 20 €.
+        for name, statement in (("sold-out-parking-en.html", "Sorry, we are sold out on your selected dates."),
+                                ("sold-out-parking-es.html", "Lo sentimos, estamos completos para estas fechas.")):
+            with self.subTest(name):
+                record = self.read(name)
+                self.assertEqual(record["kind"], "engine_no_rooms")
+                self.assertNotIn("price_eur", record)
+                self.assertEqual(record["quote"], statement)
+                self.assertEqual((record["dates_shown"]["check_in"], record["dates_shown"]["check_out"]),
+                                 ("2026-11-20", "2026-11-22"))
+
+    def test_a_per_night_dog_fee_is_not_the_room_price(self):
+        # Review #2, reproduced: "Dogs welcome: 25 € per night" undercut the 185 € room.
+        record = self.read("pet-fee-en.html")
+        self.assertEqual(record["kind"], "engine_price")
+        self.assertEqual((record["price_eur"], record["price_basis"]), (185.0, "per_night"))
+        self.assertEqual(record["quote"], "Deluxe Double 185 € per night")
 
 
 class BookingAndAirbnbRefusalTest(unittest.TestCase):
@@ -315,6 +337,233 @@ class RedirectProbeTest(unittest.TestCase):
         self.assertEqual(calls[0].get("max_redirects"), 0)
 
 
+# Stand-ins for the Playwright objects BrowserFetcher and _guard touch. No browser, no request.
+REFUSED_URLS = ["https://www.booking.com/hotel/es/casa-del-aljibe-inventada.html",
+                "https://secure.booking.com/book.html", "https://www.airbnb.es/rooms/1", "https://es.airbnb.com/s/x"]
+
+
+class FakeRequest:
+    def __init__(self, url, redirected_from=None):
+        self.url, self.redirected_from = url, redirected_from
+
+
+class FakeRoute:
+    def __init__(self, url):
+        self.request = FakeRequest(url)
+        self.calls = []
+
+    def abort(self, error_code=None):
+        self.calls.append(("abort", error_code))
+
+    def continue_(self):
+        self.calls.append(("continue",))
+
+
+class FakeFrame:
+    def __init__(self, url, text):
+        self.url, self.text, self.read = url, text, False
+
+    def evaluate(self, script):
+        self.read = True
+        return self.text
+
+    def eval_on_selector_all(self, selector, script):
+        self.read = True
+        return []
+
+
+class FakePage:
+    def __init__(self, url, frames, request):
+        self.url, self.frames, self.request, self.closed = url, frames, request, False
+
+    def set_default_timeout(self, ms):
+        pass
+
+    def goto(self, url, **kwargs):
+        return mock.Mock(request=self.request)
+
+    def wait_for_load_state(self, state, **kwargs):
+        pass
+
+    def eval_on_selector_all(self, selector, script):
+        return []
+
+    def close(self):
+        self.closed = True
+
+
+class FakeContext:
+    """A browser context whose redirect probe sees no redirect and whose one tab is page."""
+
+    def __init__(self, page):
+        self.page = page
+        self.request = self
+
+    def get(self, url, **kwargs):
+        return mock.Mock(status=200, headers={})
+
+    def new_page(self):
+        return self.page
+
+
+class BrowserPathRefusalTest(unittest.TestCase):
+    """The three R21 checks of the live path, which the saved-page browser tests never reach."""
+
+    def test_route_guard_aborts_booking_and_airbnb_requests(self):
+        for url in REFUSED_URLS:
+            with self.subTest(url):
+                route = FakeRoute(url)
+                reader._guard(route)
+                self.assertEqual(route.calls, [("abort", "blockedbyclient")])
+        for url in (SITE, ENGINE, "https://booking.casa-aljibe.example/widget.js"):
+            with self.subTest(url):
+                route = FakeRoute(url)
+                reader._guard(route)
+                self.assertEqual(route.calls, [("continue",)])
+
+    def test_a_booking_hop_in_the_browsers_redirect_chain_is_refused(self):
+        # The probe saw no redirect, but the browser was sent through Booking (a script redirect).
+        chain = FakeRequest(SITE + "habitaciones", FakeRequest("https://secure.booking.com/book.html",
+                                                               FakeRequest(SITE)))
+        frame = FakeFrame(SITE + "habitaciones", "Entrada 20/11/2026 · Salida 22/11/2026\nDoble 99 €")
+        page = FakePage(SITE + "habitaciones", [frame], chain)
+        fetcher = reader.BrowserFetcher(FakeContext(page), Exception)
+        with self.assertRaises(reader.Refused) as caught:
+            fetcher(SITE, 10)
+        self.assertEqual(caught.exception.url, "https://secure.booking.com/book.html")
+        self.assertFalse(frame.read)
+        self.assertTrue(page.closed)
+
+        page.closed = False
+        record, refused = reader.read_engine("Hotel Inventado", SITE, TRIP, fetcher,
+                                             page_timeout_s=10, give_up_after_s=20, engines=[])
+        self.assertTrue(refused)
+        self.assertEqual(record["kind"], "engine_unreadable")
+        self.assertIn("secure.booking.com", record["reason"])
+        self.assertIn("R21", record["reason"])
+        self.assertEqual(ledger.validate_evidence(record), [])
+
+    def test_text_of_a_booking_or_airbnb_frame_is_never_read(self):
+        for url in ("https://www.booking.com/widget/hotel?aid=1", "https://www.airbnb.com/embed/rooms/2"):
+            with self.subTest(url):
+                own = FakeFrame(SITE, "Entrada 20/11/2026 · Salida 22/11/2026\nNo hay disponibilidad")
+                widget = FakeFrame(url, "Total: 99 €")
+                page = FakePage(SITE, [own, widget], FakeRequest(SITE))
+                result = reader.BrowserFetcher(FakeContext(page), Exception)(SITE, 10)
+                self.assertNotIn("Total: 99 €", result.lines)
+                self.assertFalse(widget.read)
+                self.assertIn("No hay disponibilidad", result.lines)
+                record = reader.classify("Hotel Inventado", result, TRIP)
+                self.assertEqual(record["kind"], "engine_no_rooms")
+
+
+class FakePlaywrightError(Exception):
+    pass
+
+
+def fake_playwright(launch):
+    """sys.modules entries for a stand-in playwright.sync_api whose chromium.launch() calls launch()."""
+    class Chromium:
+        def launch(self, **kwargs):
+            return launch()
+
+    class Manager:
+        chromium = Chromium()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc_info):
+            return False
+
+    sync_api = types.ModuleType("playwright.sync_api")
+    sync_api.Error = FakePlaywrightError
+    sync_api.sync_playwright = Manager
+    package = types.ModuleType("playwright")
+    package.sync_api = sync_api
+    return {"playwright": package, "playwright.sync_api": sync_api}
+
+
+MISSING_BROWSER = ("BrowserType.launch: Executable doesn't exist at /made/up/chrome-headless-shell\n"
+                   "Looks like Playwright was just installed or updated.\n"
+                   "Please run the following command to download new browsers:\n    playwright install")
+LAUNCH_TIMEOUT = "BrowserType.launch: Timeout 30000ms exceeded.\nCall log:\n  - <launching> /made/up/chrome"
+
+
+class BrowserLaunchTest(unittest.TestCase):
+    def run_main(self, launch, out):
+        stdout = io.StringIO()
+        argv = ["engine_reader.py", "--candidate", "Hotel Inventado", "--url", SITE, *TRIP_ARGS, *LIMIT_ARGS,
+                "--out", str(out)]
+        with mock.patch.dict(sys.modules, fake_playwright(launch)), contextlib.redirect_stdout(stdout):
+            code = reader.main(argv)
+        return code, stdout.getvalue()
+
+    @staticmethod
+    def failing(message):
+        def launch():
+            raise FakePlaywrightError(message)
+        return launch
+
+    def test_a_missing_browser_executable_keeps_the_skip_signal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "evidence.jsonl"
+            code, stdout = self.run_main(self.failing(MISSING_BROWSER), out)
+            self.assertFalse(out.exists())
+        self.assertEqual(code, reader.EXIT_SKIPPED)
+        self.assertIn(reader.SKIP_MESSAGE, stdout)
+
+    def test_any_other_launch_failure_is_an_unreadable_record_for_this_hotel_only(self):
+        # A crash or launch timeout is not a missing install: the caller must go on to the next hotel.
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "evidence.jsonl"
+            code, stdout = self.run_main(self.failing(LAUNCH_TIMEOUT), out)
+            [record] = records(out)
+        self.assertEqual(code, reader.EXIT_OK)
+        self.assertNotIn("SKIPPED", stdout)
+        self.assertEqual(record["kind"], "engine_unreadable")
+        self.assertEqual(record["reason"],
+                         "the background browser failed to start: BrowserType.launch: Timeout 30000ms exceeded.")
+        self.assertEqual(record["source_url"], SITE)
+        self.assertEqual(ledger.validate_evidence(record), [])
+
+    def test_the_context_has_the_route_guard_and_no_stored_login(self):
+        contexts, closed = [], []
+
+        class Context:
+            def __init__(self, **options):
+                self.options, self.routes = options, []
+
+            def route(self, pattern, handler):
+                self.routes.append((pattern, handler))
+
+            @property
+            def request(self):
+                return self
+
+            def get(self, url, **kwargs):
+                raise FakePlaywrightError("connect ECONNREFUSED (made up)")
+
+        class Browser:
+            def new_context(self, **options):
+                contexts.append(Context(**options))
+                return contexts[-1]
+
+            def close(self):
+                closed.append(True)
+
+        with mock.patch.dict(sys.modules, fake_playwright(Browser)):
+            record, refused = reader.read_in_browser("Hotel Inventado", SITE, TRIP,
+                                                     {"page_timeout_s": 10, "give_up_after_s": 20})
+        [context] = contexts
+        self.assertEqual(context.routes, [("**/*", reader._guard)])
+        self.assertNotIn("storage_state", context.options)
+        self.assertEqual(closed, [True])
+        self.assertFalse(refused)
+        self.assertEqual(record["kind"], "engine_unreadable")
+        self.assertIn("could not check", record["reason"])
+
+
 class MissingPlaywrightTest(unittest.TestCase):
     def test_missing_playwright_exits_with_the_skip_signal(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -366,6 +615,53 @@ class PatternTableTest(unittest.TestCase):
     def test_tax_lines_and_zero_totals_are_not_room_prices(self):
         record = self.classify(self.DATES, "Total: 0,00 €", "Tasa turística 1,10 € por persona y noche", "Doble 140 €")
         self.assertEqual(record["price_eur"], 140.0)
+
+    def test_extras_priced_per_night_are_not_room_prices(self):
+        cases = {
+            "es": ["Parking: 18 € / noche", "Aparcamiento 15 € por noche", "Desayuno buffet 12 € por persona",
+                   "Mascota: 20 € por noche", "Perros: 15 €/noche", "Animales de compañía 10 € por noche",
+                   "Suplemento cama supletoria 30 € por noche", "Cuna 10 € por noche"],
+            "it": ["Parcheggio privato 20 € a notte", "Colazione 15 € a persona", "Cane: 15 € a notte",
+                   "Animali domestici 10 € a notte", "Supplemento vista mare 30 € a notte", "Culla 10 € a notte"],
+            "fr": ["Stationnement 20 € par nuit", "Parking privé 18 € par nuit", "Petit-déjeuner 14 € par personne",
+                   "Chien : 15 € par nuit", "Animaux 10 € par nuit", "Supplément vue mer 30 € par nuit",
+                   "Lit bébé 10 € par nuit"],
+            "en": ["Private parking: 20 € per night", "Breakfast 15 € per person", "Breakfast not included: 15 €",
+                   "Pet fee 25 € per night", "Dogs welcome: 25 € per night", "Animal fee 10 €/night",
+                   "Sea view supplement 30 € per night", "Cot 10 € per night"],
+        }
+        for lang, lines in cases.items():
+            for line in lines:
+                with self.subTest(lang=lang, line=line):
+                    record = self.classify(self.DATES, "Doble 185 €", line)
+                    self.assertEqual((record["kind"], record["price_eur"]), ("engine_price", 185.0))
+                    self.assertEqual(record["quote"], "Doble 185 €")
+
+    def test_rate_plans_that_include_breakfast_and_pet_friendly_rooms_stay_room_prices(self):
+        for line in ("Alojamiento y desayuno 160 €", "Habitación doble con desayuno 160 €",
+                     "Desayuno incluido 160 €", "Pernottamento e colazione 160 €", "Colazione inclusa 160 €",
+                     "Chambre et petit-déjeuner 160 €", "Petit-déjeuner inclus 160 €", "Bed & breakfast 160 €",
+                     "Double room with breakfast 160 €", "Breakfast included 160 €",
+                     "Pet-friendly double room 160 €", "Dog friendly room 160 €"):
+            with self.subTest(line):
+                record = self.classify(self.DATES, line)
+                self.assertEqual((record["kind"], record["price_eur"]), ("engine_price", 160.0))
+
+    def test_whole_hotel_sold_out_statements(self):
+        for line in ("Lo sentimos, estamos completos para estas fechas.", "Completo para las fechas seleccionadas",
+                     "Siamo al completo per il periodo richiesto", "Nous sommes complets pour ces dates",
+                     "Sorry, we are sold out on your selected dates.", "We're sold out for these dates",
+                     "Sold out for the selected dates", "The hotel is fully booked"):
+            with self.subTest(line):
+                record = self.classify(self.DATES, line, "Parking: 18 € / noche")
+                self.assertEqual(record["kind"], "engine_no_rooms")
+                self.assertEqual(record["quote"], line)
+
+    def test_room_level_sold_out_next_to_a_priced_room_is_still_a_price(self):
+        for line in ("Superior room: sold out", "We're sold out of superior rooms", "Suite agotada"):
+            with self.subTest(line):
+                record = self.classify(self.DATES, line, "Doble 140 €")
+                self.assertEqual((record["kind"], record["price_eur"]), ("engine_price", 140.0))
 
     def test_price_and_no_availability_on_one_page_is_unknown(self):
         record = self.classify(self.DATES, "No hay disponibilidad", "Fechas alternativas desde 140 €")

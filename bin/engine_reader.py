@@ -49,7 +49,8 @@ Airbnb, once, and that page decides. A page that refuses automated browsers (an 
 CAPTCHA) is recorded as engine_unreadable with a reason that starts with "blocked".
 
 Exit codes:
-    0  a record was written (any kind)
+    0  a record was written (any kind; a browser that is installed but fails to start is
+       engine_unreadable for this read)
     1  the record failed ledger validation and was not written (a bug)
     2  bad arguments
     3  refused under R21; an engine_unreadable record was written
@@ -87,15 +88,21 @@ NO_TEXT = "[no page text]"
 PATTERNS = {
     # Page-level statements that no room is left for the dates. Room-level words such as
     # "sold out" or "agotada" stay out: they sit next to other rooms that are still for sale.
+    # "We're sold out" counts only for the whole hotel, not "we're sold out of superior rooms".
     "no_rooms": {
         "es": [r"no hay disponibilidad", r"sin disponibilidad", r"no tenemos disponibilidad",
-               r"no (?:hay|quedan|tenemos) habitaciones disponibles", r"no quedan habitaciones"],
+               r"no (?:hay|quedan|tenemos) habitaciones disponibles", r"no quedan habitaciones",
+               r"estamos completos", r"completos? (?:para|en) (?:estas|esas|las|sus) fechas"],
         "it": [r"nessuna disponibilita", r"non c'e disponibilita", r"nessuna camera disponibile",
-               r"non (?:ci sono|vi sono|abbiamo) camere disponibili"],
+               r"non (?:ci sono|vi sono|abbiamo) camere disponibili", r"siamo al completo",
+               r"(?:hotel|albergo|struttura) (?:e )?al completo"],
         "fr": [r"aucune disponibilite", r"pas de disponibilite", r"aucune chambre (?:n'est )?disponible",
-               r"complet (?:pour|a|aux) (?:ces|les|vos) dates"],
+               r"complet (?:pour|a|aux) (?:ces|les|vos) dates", r"nous sommes complets?",
+               r"(?:l'hotel|l'etablissement) est complet"],
         "en": [r"no availability", r"no rooms? (?:are |is )?available", r"fully booked",
-               r"not available (?:for|on) (?:the|your|these|those) (?:selected )?dates"],
+               r"not available (?:for|on) (?:the|your|these|those) (?:selected )?dates",
+               r"we(?: are|'re) sold out\b(?! of\b)", r"sold out (?:for|on) (?:the|your|these|those) (?:selected )?dates",
+               r"hotel is sold out"],
     },
     # Per-night wording next to an amount, without a number of nights.
     "per_night": {
@@ -118,12 +125,23 @@ PATTERNS = {
         "fr": [r"\btotal\b"],
         "en": [r"\btotal\b"],
     },
-    # Lines whose EUR amount is not a room price: tourist taxes and savings.
+    # Lines whose EUR amount is not a room price: tourist taxes, savings and extras (parking,
+    # breakfast, a pet fee, a supplement, a cot), which engines often price per night as well.
+    # A rate that includes breakfast ("alojamiento y desayuno", "breakfast included") and a
+    # pet-friendly room are room prices, so the breakfast and pet words leave those out.
     "not_a_room_price": {
-        "es": [r"tasa turistica", r"impuesto turistico", r"\bahorra"],
-        "it": [r"tassa di soggiorno", r"imposta di soggiorno", r"\brisparmi"],
-        "fr": [r"taxe de sejour", r"\beconomise"],
-        "en": [r"\b(?:city|tourist|resort) tax\b", r"\bsave\b"],
+        "es": [r"tasa turistica", r"impuesto turistico", r"\bahorra", r"\bparking\b", r"\baparcamiento",
+               r"(?<!con )(?<!y )\bdesayunos?\b(?! incluid)", r"\bmascotas?\b", r"\bperros?\b", r"\banimal",
+               r"\bsuplemento", r"\bcunas?\b"],
+        "it": [r"tassa di soggiorno", r"imposta di soggiorno", r"\brisparmi", r"\bparcheggio",
+               r"(?<!con )(?<!e )\bcolazione\b(?! inclus)", r"\bcan[ei]\b", r"\banimal", r"\bsupplemento",
+               r"\bculla"],
+        "fr": [r"taxe de sejour", r"\beconomise", r"\bstationnement", r"\bparking\b",
+               r"(?<!avec )(?<!et )\bpetit[- ]dejeuner\b(?! (?:inclus|compris))", r"\bchiens?\b", r"\banimal",
+               r"\banimaux\b", r"\bsupplement", r"\blits? bebe"],
+        "en": [r"\b(?:city|tourist|resort) tax\b", r"\bsave\b", r"\bparking\b",
+               r"(?<!with )(?<!and )(?<!& )\bbreakfast\b(?! (?:is )?included)", r"\bpets?\b(?![- ]friendly)",
+               r"\bdogs?\b(?![- ]friendly)", r"\banimal", r"\bsupplement", r"\bcots?\b", r"\bcribs?\b"],
     },
     # Link text of a booking link on the hotel's own site.
     "booking_link": {
@@ -691,6 +709,11 @@ _BODY_TEXT = "() => document.body ? document.body.innerText : ''"
 _TEXT_INPUTS = "input:not([type=hidden]):not([type=checkbox]):not([type=radio])"
 
 
+# Playwright's words when its browser was never downloaded ("Executable doesn't exist at ...,
+# run playwright install"): a missing install, unlike a crash or a launch timeout.
+BROWSER_MISSING = re.compile(r"executable doesn't exist|playwright install", re.IGNORECASE)
+
+
 def _first_line(error: Exception) -> str:
     return (str(error).strip().splitlines() or [type(error).__name__])[0]
 
@@ -774,7 +797,11 @@ class BrowserFetcher:
 
 
 def read_in_browser(candidate: str, url: str, trip: Trip, limits: dict) -> tuple | None:
-    """read_engine in headless Chromium; None when the browser is not installed (R22)."""
+    """read_engine in headless Chromium; None when Playwright or its browser is not installed (R22).
+
+    Any other launch failure (a crash, a launch timeout) is this read's engine_unreadable record,
+    so the caller goes on to the next hotel instead of telling the user to install the browser.
+    """
     try:
         from playwright.sync_api import Error as PlaywrightError, sync_playwright
     except ImportError:
@@ -784,8 +811,11 @@ def read_in_browser(candidate: str, url: str, trip: Trip, limits: dict) -> tuple
         try:
             browser = playwright.chromium.launch(headless=True)
         except PlaywrightError as error:
-            print(f"{SKIP_MESSAGE} or could not start: {_first_line(error)}")
-            return None
+            if BROWSER_MISSING.search(str(error)):
+                print(f"{SKIP_MESSAGE} ({_first_line(error)})")
+                return None
+            return unreadable(candidate, url, NO_TEXT,
+                              f"the background browser failed to start: {_first_line(error)}"), False
         try:
             # en-GB: day-first dates and English month names, which the date patterns read.
             context = browser.new_context(locale="en-GB", accept_downloads=False, service_workers="block")
