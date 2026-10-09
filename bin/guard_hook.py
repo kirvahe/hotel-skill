@@ -21,10 +21,11 @@ Blocked only while a find-hotel run is open:
   - Gmail tools (any MCP server with "gmail" in its name) outside the read-only list;
   - browser and screen calls that name no URL (a tab read, a click, a screenshot).
 
-A run is open when any data/trips/*/run folder (bin/ledger.py) has a stage other than "done".
-A run folder without state.json is at "intake" (as ledger.read_state reads it), and a state
-file that cannot be parsed counts as open. There is no age limit: a run stays open until its
-stage is set to "done", because the skill resumes open runs.
+A run is open when any data/trips/*/run folder (bin/ledger.py) has a stage other than "done" and
+its check-in date (trip.json) has not passed. A run folder without state.json is at "intake" (as
+ledger.read_state reads it); a state file that cannot be parsed, or a trip.json without a
+readable check-in, counts as open. There is no age limit: an unfinished run stays open until its
+check-in date or until the skill closes it, because the skill resumes open runs.
 
 Host rule: booking.com and its subdomains, and any host with an "airbnb" label, the same rule
 as engine_reader.refused_host (tests/test_guard_hook.py checks that they agree).
@@ -41,6 +42,7 @@ from __future__ import annotations
 
 import json
 import os
+from datetime import date
 import re
 import sys
 from pathlib import Path
@@ -185,9 +187,16 @@ def open_run(skill_dir: Path = SKILL_DIR) -> str | None:
         run = Path(entry.path) / "run"
         if run.is_dir():
             stage = _stage(run / "state.json")
-            if stage != "done":
+            if stage != "done" and not _check_in_passed(run / "trip.json"):
                 return f"trips/{entry.name}/run, stage {stage}"
     return None
+
+
+def _check_in_passed(path: Path) -> bool:
+    try:
+        return date.fromisoformat(json.loads(path.read_text(encoding="utf-8"))["check_in"]) < date.today()
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return False
 
 
 def _stage(path: Path) -> str:

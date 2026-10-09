@@ -3,6 +3,13 @@ name: hotel
 description: Find hotels matching taste profile. This skill should be used when the user asks for hotel recommendations, wants to rate a hotel stay, or asks to analyze hotel preferences. Triggers on hotel search, "where to stay", accommodation, city names with hotel context.
 argument-hint: [city budget/occasion]
 version: "1.2"
+hooks:
+  PreToolUse:
+    - matcher: "^(Bash|WebFetch|mcp__.+)$"
+      hooks:
+        - type: command
+          command: '[ -f "__HOTEL_SKILL_DIR__/bin/guard_hook.py" ] || exit 0; exec python3 "__HOTEL_SKILL_DIR__/bin/guard_hook.py"'
+          timeout: 10
 ---
 
 ## Before anything else

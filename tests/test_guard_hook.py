@@ -286,6 +286,16 @@ class GmailTest(GuardTest):
         (run / "state.json").write_text("{not json", encoding="utf-8")
         self.assertBlocked(self.hook("mcp__claude_ai_Gmail__reply", {"body": "x"}), rule="KTD9")
 
+    def test_a_run_whose_check_in_has_passed_is_not_open(self):
+        run = self.open_run()
+        (run / "trip.json").write_text(json.dumps({"check_in": "2020-01-10", "check_out": "2020-01-12"}), encoding="utf-8")
+        self.assertAllowed(self.hook("mcp__claude_ai_Gmail__send_message", {"to": "x@example.com"}))
+
+    def test_a_run_whose_check_in_is_ahead_is_open(self):
+        run = self.open_run()
+        (run / "trip.json").write_text(json.dumps({"check_in": "2099-01-10", "check_out": "2099-01-12"}), encoding="utf-8")
+        self.assertBlocked(self.hook("mcp__claude_ai_Gmail__send_message", {"to": "x@example.com"}), rule="KTD9")
+
     def test_missing_data_folder_means_no_run(self):
         (self.skill / "data").unlink()
         self.assertAllowed(self.hook("mcp__claude_ai_Gmail__send_message", {"to": "x@example.com"}))

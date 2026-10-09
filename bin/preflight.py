@@ -11,16 +11,21 @@ directory are both fine.
 Prints JSON {"status": "ok"|"stop", "message", "data_root", "warnings"}.
 Exit 0 when the run may continue, 1 when it must stop and show the message.
 A run stops when data/ is absent, links to a missing folder, has no
-taste-profile.md, or the profile is still the unfilled template.
+taste-profile.md, or the profile is still the unfilled template; and when
+DIR/SKILL.md does not name an installed guard hook (bin/guard_hook.py, R21):
+the hook command lets every call through when its file is gone, so this is
+where a moved or hand-copied skill is caught.
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
 PLACEHOLDER_PREFIXES = ("<!--", "_TBD", "{")
+GUARD_PATH = re.compile(r"""([^\s"']*/bin/guard_hook\.py)""")
 
 
 def top3_hotels(profile: str) -> int | None:
@@ -47,10 +52,32 @@ def top3_hotels(profile: str) -> int | None:
     return count
 
 
+def guard_problem(skill_dir: Path) -> str | None:
+    """Why the guard hook is not usable, or None. A skill folder without SKILL.md is not checked."""
+    skill_md = skill_dir / "SKILL.md"
+    if not skill_md.is_file():
+        return None
+    paths = GUARD_PATH.findall(skill_md.read_text(encoding="utf-8"))
+    reinstall = "Re-install with ./install.sh, which sets the guard hook's path."
+    if not paths:
+        return f"{skill_md} names no guard hook (bin/guard_hook.py). {reinstall}"
+    if any("__HOTEL_SKILL_DIR__" in path for path in paths):
+        return f"The guard hook in {skill_md} was never set up (the skill was copied by hand). {reinstall}"
+    missing = [path for path in dict.fromkeys(paths) if not Path(path).is_file()]
+    if missing:
+        return f"The guard hook file is missing: {missing[0]} (was the skill folder moved?). {reinstall}"
+    return None
+
+
 def check(skill_dir: Path) -> dict:
     data = skill_dir / "data"
     result = {"status": "stop", "message": "", "data_root": "", "warnings": []}
     reinstall = "Re-install with: ./install.sh --data-dir /path/to/your/hotel-data"
+
+    problem = guard_problem(skill_dir)
+    if problem:
+        result["message"] = problem
+        return result
 
     if os.path.islink(data) and not data.exists():
         result["message"] = f"data/ links to a missing folder: {os.readlink(data)}. Restore that folder, or {reinstall[0].lower() + reinstall[1:]}"

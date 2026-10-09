@@ -125,6 +125,36 @@ else
   fail "guard hook path install (installer exited non-zero)"
 fi
 
+# 10. A skill folder path with an apostrophe is refused too (the hook command is a single-quoted
+#     YAML string in SKILL.md)
+root="$(new_root)"
+if run_install "$root" --skill-dir "$root/it's/hotel"; then
+  fail "skill folder path with an apostrophe is refused"
+elif [[ -e "$root/it's" ]]; then
+  fail "skill folder path with an apostrophe creates nothing"
+else
+  pass "skill folder path with an apostrophe is refused"
+fi
+
+# 9. The real SKILL.md hook command, once installed, blocks a Booking fetch; when the hook file
+#    is gone (the skill folder moved) it lets calls through instead of breaking every tool call.
+root="$(new_root)"; fixture_data "$root/mydata"
+skill="$root/skills/hotel"
+if run_install "$root" --skill-dir "$skill" --data-dir "$root/mydata"; then
+  cmd="$(sed -n "s/^ *command: '\\(.*\\)'$/\\1/p" "$skill/SKILL.md")"
+  booking='{"hook_event_name":"PreToolUse","tool_name":"WebFetch","tool_input":{"url":"https://www.booking.com/x"}}'
+  printf '%s' "$booking" | sh -c "$cmd" >/dev/null 2>&1; blocked=$?
+  mv "$skill/bin/guard_hook.py" "$root/guard_hook.py.moved"
+  printf '%s' "$booking" | sh -c "$cmd" >/dev/null 2>&1; missing=$?
+  if [[ -n "$cmd" && "$cmd" == *"$skill/bin/guard_hook.py"* && "$blocked" -eq 2 && "$missing" -eq 0 ]]; then
+    pass "installed hook command blocks Booking and lets calls through when the hook file is gone"
+  else
+    fail "installed hook command (cmd='$cmd', blocked exit $blocked, missing-file exit $missing)"
+  fi
+else
+  fail "hook command install (installer exited non-zero)"
+fi
+
 # 8. A skill folder path with a double quote is refused before anything is written
 root="$(new_root)"
 if run_install "$root" --skill-dir "$root/bad\"name/hotel"; then

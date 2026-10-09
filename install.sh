@@ -177,7 +177,7 @@ case "${TARGET}" in
   /*) TARGET_PATH="${TARGET}" ;;
   *)  TARGET_PATH="${PWD}/${TARGET}" ;;
 esac
-if [[ "${TARGET_PATH}" == *[\"\\]* ]]; then
+if [[ "${TARGET_PATH}" == *[\"\'\\]* ]]; then
   die "the skill folder path contains a quote or a backslash: ${TARGET_PATH}
        The guard hook needs a plain path. Choose another --skill-dir. Nothing was installed."
 fi
