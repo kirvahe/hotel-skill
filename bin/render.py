@@ -19,8 +19,9 @@ cancellation terms).
 Groups:
     hotels         kept by the fit filter, not unavailable, not struck out, and either
                    without an engine price or priced within the budget
-    beyond budget  priced above the budget AND named in verdicts.json; any other
-                   over-budget candidate is not shown at all (R25, AE11)
+    beyond budget  priced above the budget AND named under clearly_better in verdicts.json
+                   (and not under not_better, which wins); any other over-budget
+                   candidate is not shown at all (R25, AE11)
     airbnb         special formats, always "dates not verified" (R19)
     skipped        a "Skipped: {reason} — {hotel} — {detail}" line for each fit-filter
                    removal and each unavailable hotel
@@ -128,6 +129,7 @@ LABELS = {
         "why_text": "{text}",
         "why_reader_missing": "background browser not installed",
         "why_nothing_to_read": "no hotel needed a read",
+        "why_reader_error": "the reader failed on {count} hotel(s)",
         "why_nothing_passed": "nothing passed the checks",
         "why_kept_nothing": "you kept nothing",
         "why_no_official_site": "no kept hotel has its own website",
@@ -212,6 +214,7 @@ LABELS = {
         "why_text": "{text}",
         "why_reader_missing": "фоновый браузер не установлен",
         "why_nothing_to_read": "проверять было нечего",
+        "why_reader_error": "сбоев при проверке: {count}",
         "why_nothing_passed": "ни один вариант не прошёл проверки",
         "why_kept_nothing": "вы ничего не оставили",
         "why_no_official_site": "ни у одного из оставленных отелей нет своего сайта",
@@ -313,12 +316,11 @@ def build_view(run_dir: Path) -> dict:
             continue
         per_night = nightly(price, entry["price_basis"], nights)
         if per_night is not None and per_night > budget:
-            better = runfiles.records_naming(candidate, verdicts.get("clearly_better", []))  # R25, any of its names
-            reason = better[0].get("reason", "") if better else None
-            if reason is None:
-                removed.append({"code": "over_budget", "name": name, "detail": "", "price": price})
-            else:
+            if runfiles.budget_verdict(candidate, verdicts) == "clearly_better":  # R25, any of its names
+                reason = runfiles.verdict_records(candidate, verdicts, "clearly_better")[0].get("reason", "")
                 beyond.append(dict(entry, why=reason))
+            else:
+                removed.append({"code": "over_budget", "name": name, "detail": "", "price": price})
             continue
         hotels.append(entry)
 

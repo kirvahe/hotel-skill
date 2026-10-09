@@ -23,8 +23,10 @@ Struck out by hotel name and trip, Searched by trip.
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 import ledger
@@ -251,10 +253,24 @@ def update(text, *, city: str, today: str, run_id: str, searched: str, sources: 
 
 
 def write(path: Path, **changes) -> Path:
+    """Update the cache file in one step: the new text goes to a temporary file next to it, which then
+    replaces the file, so an interrupted write never leaves the user's cache cut short."""
     path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    old = path.read_text(encoding="utf-8") if path.is_file() else None
-    path.write_text(update(old, **changes), encoding="utf-8")
+    target = path.resolve() if path.is_symlink() else path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    old = target.read_text(encoding="utf-8") if target.is_file() else None
+    text = update(old, **changes)
+    handle, temp = tempfile.mkstemp(dir=str(target.parent), prefix=f".{target.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as out:
+            out.write(text)
+        mask = os.umask(0)
+        os.umask(mask)
+        os.chmod(temp, target.stat().st_mode & 0o777 if target.is_file() else 0o666 & ~mask)
+        os.replace(temp, target)
+    except BaseException:
+        Path(temp).unlink(missing_ok=True)  # only the temporary copy; the cache file is untouched
+        raise
     return path
 
 

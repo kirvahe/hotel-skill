@@ -49,6 +49,16 @@ class DecideTest(unittest.TestCase):
                                          dates_shown=MATCH)], TRIP)
         self.assertEqual(result["status"], "unknown")
 
+    # #14: the host decides, as for the guard and the reader, not a "booking.com" anywhere in the URL
+    def test_the_hotel_engine_counts_when_its_url_only_names_booking(self):
+        for url in ("https://hotel.example/book?utm_source=booking.com", "https://reservas.myhotelbooking.com/",
+                    "https://hotel.example/reservas/airbnb.es"):
+            result = status_table.decide([ev("engine_price", url=url, dates_shown=MATCH, price_eur=160)], TRIP)
+            self.assertEqual((result["status"], result["price_eur"]), ("available", 160), url)
+        for url in ("https://secure.booking.com/book.html", "https://www.airbnb.com/rooms/1", "booking.com/hotel/tg/x"):
+            result = status_table.decide([ev("engine_price", url=url, dates_shown=MATCH, price_eur=160)], TRIP)
+            self.assertEqual(result["status"], "unknown", url)
+
     # AE2
     def test_closure_from_the_second_night_is_unavailable(self):
         result = status_table.decide([ev("closure", closed_from="2026-11-21")], TRIP)

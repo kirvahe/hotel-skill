@@ -33,6 +33,7 @@ python3 {skill}/bin/orchestrate.py availability RUN
 ```
 
 - `reader.status` skipped: the background browser is not installed. Tell the user once that availability stays ❓ (README, "Background browser").
+- `reader.status` failed or partial: the reader crashed or hung on the hotels `not_read` names with "reader error" or "reader timed out". They stay ❓; the next `availability` run (a checkpoint change) tries them again.
 - `entries` 0: nothing survived (F2). Go to stage 8.
 
 **4. Over-budget verdicts (R25).** `over_budget` lists hotels priced above the budget. For each, decide whether it clearly beats every in-budget option, from what its sources say, and write `RUN/verdicts.json` with one-line reasons in the request language:

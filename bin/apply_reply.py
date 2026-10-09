@@ -8,7 +8,8 @@ The model turns the user's reply into JSON, with either part optional:
     {"strike": [{"number": 3, "reason": "too far out"}, 5],
      "change": {"check_in": "YYYY-MM-DD", "check_out": "YYYY-MM-DD", "budget_max": 300, "dog": true}}
 
-Numbers are the stable entry numbers from render.py (numbers.json). Each reply
+Numbers are the stable entry numbers from render.py (numbers.json); a reply that
+only changes something needs none, as after "Nothing fits" (F2). Each reply
 is saved as one checkpoint in checkpoints.json, strike-outs with their reasons.
 A change updates trip.json and re-runs fit_filter and status_table on the saved
 candidates, without new research. Strike-outs from earlier checkpoints are
@@ -72,7 +73,8 @@ def apply(run_dir: Path, reply: dict) -> dict:
         raise runfiles.RunError('a reply is {"strike": [...], "change": {...}}')
     trip = runfiles.load_trip(run_dir)
     numbers = runfiles.read_numbers(run_dir)["numbers"]
-    if not numbers:
+    # A change-only reply needs no entry numbers: after "nothing fits" no shortlist was ever numbered (F2).
+    if reply.get("strike") and not numbers:
         raise runfiles.RunError("numbers.json not found or empty: render the shortlist first")
     names = {c["id"]: c["name"] for c in runfiles.load_merged(run_dir)}
     strikes = _strikes(reply, numbers, names)

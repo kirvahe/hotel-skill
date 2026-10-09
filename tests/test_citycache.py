@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 BIN = Path(__file__).resolve().parent.parent / "bin"
 sys.path.insert(0, str(BIN))
@@ -187,6 +188,23 @@ class UpdateTest(unittest.TestCase):
             citycache.write(path, city="Testgrad", today="2026-10-09", run_id="testgrad-2026-11", searched=SEARCHED,
                             sources=SOURCES, recommended=PICKS, struck=STRUCK)
             self.assertTrue(citycache.read(path)["exists"])
+
+    # residual: the cache is the user's file; a write that fails part-way must leave it as it was
+    def test_a_failed_write_leaves_the_old_cache_whole(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "cities" / "testgrad.md"
+            path.parent.mkdir()
+            path.write_text(LEGACY, encoding="utf-8")
+            with mock.patch.object(citycache.os, "replace", side_effect=OSError("disk full")):
+                with self.assertRaises(OSError):
+                    citycache.write(path, city="Testgrad", today="2026-10-09", run_id="testgrad-2026-11",
+                                    searched=SEARCHED, sources=SOURCES, recommended=PICKS, struck=STRUCK)
+            self.assertEqual(path.read_text(encoding="utf-8"), LEGACY)
+            self.assertEqual(sorted(p.name for p in path.parent.iterdir()), ["testgrad.md"])
+            citycache.write(path, city="Testgrad", today="2026-10-09", run_id="testgrad-2026-11", searched=SEARCHED,
+                            sources=SOURCES, recommended=PICKS, struck=STRUCK)
+            self.assertIn("testgrad-2026-11:", path.read_text(encoding="utf-8"))
+            self.assertEqual(sorted(p.name for p in path.parent.iterdir()), ["testgrad.md"])
 
     def test_cli_read_prints_json(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -35,7 +35,7 @@ TASTE = {"taste_summary": "small hotels with character in historic buildings, li
                           "personal service; no large chains",
          "judgment_rules": ["large or mainstream hotel (over about 60 rooms)"]}
 TRIP = dict(city="Testgrad", country="Testland", languages="A = Spanish, B = English, C = none", lang="en",
-            check_in="2026-11-20", check_out="2026-11-22", guests=2, budget_max=200, dog=False, occasion="city-break")
+            check_in="2099-11-20", check_out="2099-11-22", guests=2, budget_max=200, dog=False, occasion="city-break")
 FAMILIES = ledger.FAMILIES
 
 
@@ -76,6 +76,50 @@ def research_outputs(run: Path, invalid_reddit: bool = False) -> None:
     if invalid_reddit:
         with open(run / runfiles.CANDIDATES.format(family="reddit"), "a", encoding="utf-8") as handle:
             handle.write((AGENTS / "invalid-reddit-line.jsonl").read_text(encoding="utf-8"))
+
+
+# A stand-in for bin/engine_reader.py: the same arguments, a made-up price for every hotel it is
+# asked about, exit 1 (a reader crash) for the names under "fail". Each call is logged with its
+# argument list and the number of hotels reads.json already held when it ran.
+FAKE_READER = r'''
+import argparse, json, sys
+from datetime import datetime, timezone
+from pathlib import Path
+config = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+parser = argparse.ArgumentParser()
+for name in ("--candidate", "--url", "--check-in", "--check-out", "--guests", "--out",
+             "--page-timeout-s", "--give-up-after-s", "--fixture"):
+    parser.add_argument(name)
+args = parser.parse_args(sys.argv[2:])
+reads = Path(args.out).parent / "reads.json"
+on_file = len(json.loads(reads.read_text(encoding="utf-8"))["reads"]) if reads.is_file() else 0
+with open(config["log"], "a", encoding="utf-8") as log:
+    log.write(json.dumps({"argv": sys.argv[2:], "reads_on_file": on_file}, ensure_ascii=False) + "\n")
+if args.candidate in config["fail"]:
+    sys.exit(1)
+record = {"candidate": args.candidate, "kind": "engine_price", "source_url": args.url,
+          "quote": "Doble: %s € por noche" % config["price"],
+          "read_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+          "price_eur": config["price"], "price_basis": "per_night",
+          "dates_shown": {"check_in": args.check_in, "check_out": args.check_out, "quote": "Llegada / Salida"}}
+with open(args.out, "a", encoding="utf-8") as out:
+    out.write(json.dumps(record, ensure_ascii=False) + "\n")
+print(json.dumps(record, ensure_ascii=False))
+'''
+
+
+def fake_reader(tmp, price: float = 400, fail=()) -> tuple[list, Path]:
+    """(reader command for orchestrate's reader= argument, log file of its calls)."""
+    tmp = Path(tmp)
+    script, config, log = tmp / "fake_reader.py", tmp / "fake-reader.json", tmp / "fake-reader-calls.jsonl"
+    script.write_text(FAKE_READER, encoding="utf-8")
+    config.write_text(json.dumps({"price": price, "fail": list(fail), "log": str(log)}, ensure_ascii=False),
+                      encoding="utf-8")
+    return [sys.executable, str(script), str(config)], log
+
+
+def reader_calls(log: Path) -> list:
+    return read_jsonl(log) if Path(log).is_file() else []
 
 
 def agent_files(run: Path, *names: str) -> None:

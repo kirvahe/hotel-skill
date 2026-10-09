@@ -46,8 +46,8 @@ def _dates_match(record: dict, check_in: str, check_out: str) -> bool:
 
 
 def _from_ota(record: dict) -> bool:
-    url = str(record.get("source_url") or record.get("url") or "").lower()
-    return any(host in url for host in ledger.OTA_DOMAINS)
+    """True when the record's page is on a Booking or Airbnb host (the guard's host rule, R21)."""
+    return bool(ledger.ota_host(record.get("source_url") or record.get("url")))
 
 
 def closure_overlaps(record: dict, check_in: str, check_out: str):

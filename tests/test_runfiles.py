@@ -85,6 +85,22 @@ class MatchByNameTest(unittest.TestCase):
         self.assertEqual(unmatched, ["Elsewhere"])
 
 
+class BudgetVerdictTest(unittest.TestCase):
+    """#13: one R25 rule for the over-budget pool and the shortlist; not_better wins."""
+    CANDIDATE = {"id": "torre-alta", "name": "Hotel Torre Alta", "local_name": "Torre del Valle"}
+
+    def test_verdicts_name_the_hotel_by_any_name_and_not_better_wins(self):
+        better = {"candidate": "Torre del Valle", "reason": "the only valley view"}
+        worse = {"candidate": "Hotel Torre Alta", "reason": "pricier, nothing more"}
+        verdict = runfiles.budget_verdict
+        self.assertEqual(verdict(self.CANDIDATE, {"clearly_better": [better]}), "clearly_better")
+        self.assertEqual(verdict(self.CANDIDATE, {"not_better": [worse]}), "not_better")
+        self.assertEqual(verdict(self.CANDIDATE, {"clearly_better": [better], "not_better": [worse]}), "not_better")
+        self.assertEqual(verdict(self.CANDIDATE, {"not_better": [worse], "clearly_better": [better]}), "not_better")
+        self.assertIsNone(verdict(self.CANDIDATE, {"clearly_better": [{"candidate": "Casa Velarta"}], "not_better": None}))
+        self.assertIsNone(verdict(self.CANDIDATE, {}))
+
+
 class RunDirsTest(unittest.TestCase):
     def test_data_and_trip_folders_come_from_the_run_folder(self):
         run = Path("/x/data/trips/testgrad-2026-11/run")

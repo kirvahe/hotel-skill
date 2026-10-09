@@ -15,7 +15,8 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "orchestrator"
 sys.path.insert(0, str(FIXTURES))
 
 import orchkit  # noqa: E402
-from orchkit import BIN, ENGINES, FAMILIES, block, edit_candidate, entries, read_json, write_json  # noqa: E402
+from orchkit import (BIN, ENGINES, FAMILIES, block, edit_candidate, entries, read_json, read_jsonl,  # noqa: E402
+                     reader_calls, write_json, write_jsonl)
 
 import citycache  # noqa: E402
 import ledger  # noqa: E402
@@ -129,7 +130,7 @@ class StartResumeTest(Base):
         self.assertEqual(trip["languages"], "A = Spanish, B = English, C = none")
         self.assertEqual(out["stage"], "context")
         self.assertEqual(out["stage_file"], "workflows/find-hotel/2-context.md")
-        self.assertEqual(self.run, self.data / "trips" / "testgrad-2026-11" / "run")
+        self.assertEqual(self.run, self.data / "trips" / "testgrad-2099-11" / "run")
 
     def test_resume_lists_an_open_run_with_its_stage_file(self):
         self.start()
@@ -161,9 +162,9 @@ class StartResumeTest(Base):
     def test_start_refuses_to_overwrite_an_open_run(self):
         self.start()
         with self.assertRaises(orchestrate.Stop) as ctx:
-            self.start(check_in="2026-11-27", check_out="2026-11-29")
+            self.start(check_in="2099-11-27", check_out="2099-11-29")
         self.assertEqual(ctx.exception.payload["status"], "open_run")
-        self.assertEqual(read_json(self.run / "trip.json")["check_in"], "2026-11-20")
+        self.assertEqual(read_json(self.run / "trip.json")["check_in"], "2099-11-20")
 
     def test_a_new_run_archives_the_old_one(self):
         self.to_research()
@@ -177,6 +178,49 @@ class StartResumeTest(Base):
         self.start()
         ledger.write_state(self.run, stage="done", waiting_for=[])
         self.assertIsNotNone(self.start()["archived"])
+
+    # #11: a rejected start writes nothing, so no run folder is left that counts as open
+    def test_an_invalid_trip_leaves_no_run_folder(self):
+        with self.assertRaises(runfiles.RunError) as ctx:
+            self.start(check_in="2099-11-22", check_out="2099-11-20")
+        self.assertIn("check_out must be after check_in", str(ctx.exception))
+        self.assertEqual(list(self.data.glob("trips/*/run")), [])
+
+    def test_an_invalid_new_start_keeps_the_open_run_in_place(self):
+        self.start()
+        with self.assertRaises(runfiles.RunError):
+            self.start(new=True, guests=0)
+        self.assertEqual(read_json(self.run / "trip.json")["guests"], 2)
+        self.assertEqual(list(self.data.glob("trips/*/run-*")), [])
+
+    def test_close_ends_a_run_folder_without_a_trip_file(self):
+        run = self.data / "trips" / "testgrad-2099-12" / "run"
+        run.mkdir(parents=True)  # what a failed start used to leave behind
+        out = orchestrate.close(run, "abandoned")
+        self.assertEqual((out["stage"], ledger.read_state(run)["stage"]), ("done", "done"))
+        self.assertEqual(ledger.read_state(run)["closed_reason"], "abandoned")
+        with self.assertRaises(runfiles.RunError):
+            orchestrate.close(self.data / "trips" / "testgrad-2099-12" / "not-a-run", "x")
+
+    # #15: a new run for the same city and month keeps the earlier answer and Searched line
+    def test_a_new_run_keeps_the_old_answer_and_its_searched_line(self):
+        self.start()
+        trip_dir = runfiles.trip_dir(self.run)
+        orchestrate.write_cache(self.run, final=False, today=TODAY)
+        (trip_dir / runfiles.ANSWER_FILE).write_text("# the first run's answer\n", encoding="utf-8")
+        first_id = orchestrate.cache_run_id(self.run)
+        ledger.write_state(self.run, stage="done", waiting_for=[])
+        out = self.start(new=True)
+        self.assertEqual((Path(out["archived"]) / runfiles.ANSWER_FILE).read_text(encoding="utf-8"),
+                         "# the first run's answer\n")
+        self.assertFalse((trip_dir / runfiles.ANSWER_FILE).exists())
+        orchestrate.write_cache(self.run, final=False, today=TODAY)
+        second_id = orchestrate.cache_run_id(self.run)
+        self.assertNotEqual(first_id, second_id)
+        searched = (self.data / "cities" / "testgrad.md").read_text(encoding="utf-8").split("## Searched")[1]
+        searched = searched.split("\n## ")[0]
+        self.assertIn(f" {first_id}:", searched)
+        self.assertIn(f" {second_id}:", searched)
 
 
 class ContextTest(Base):
@@ -409,6 +453,165 @@ class ResolverAvailabilityTest(Base):
         modules = read_json(self.run / "modules.json")["modules"]
         self.assertEqual(modules["final_check"]["status"], "skipped")
 
+    # R25: a hotel named in both verdict lists is not better, for the pool and for the shortlist alike
+    def test_a_not_better_verdict_wins_over_a_clearly_better_one(self):
+        self.to_shortlist()
+        both = {"candidate": "Hotel Torre Alta", "reason": "the only valley view in town"}
+        write_json(self.run / "verdicts.json", {"clearly_better": [both], "not_better": [both]})
+        out = orchestrate.availability(self.run, reader_fixtures=ENGINES)
+        self.assertEqual([(p["name"], p["verdict"]) for p in out["over_budget"]], [("Hotel Torre Alta", "not_better")])
+        text = self.shortlist()
+        self.assertNotIn("Hotel Torre Alta", entries(text))
+        self.assertNotIn(EN["beyond_budget"], text)
+
+
+class ReaderTest(Base):
+    """The engine reader as availability runs it: limits, crashes and its bookkeeping (R22)."""
+
+    def to_reader(self, batches=2):
+        self.to_filter()
+        orchestrate.fanout(self.run, "resolver", batches=batches, contract=self.contract)
+        orchkit.agent_files(self.run, *RESOLVER_FILES)
+        orchestrate.resolved(self.run)
+
+    # #12: a reader that crashes on every hotel is a failed module, not "nothing to read"
+    def test_reader_crashes_on_every_hotel_make_the_module_failed(self):
+        self.to_reader()
+        names = ["Casa Velarta", "Hotel Sombra", "Hotel Otoño", "Hotel Torre Alta", "Hotel Marquesa Vieja",
+                 "Palacio Ñandú", "El Patio Lunar"]
+        command, log = orchkit.fake_reader(self.tmp.name, fail=names)
+        out = orchestrate.availability(self.run, reader=command)
+        self.assertEqual(len(reader_calls(log)), 7)
+        self.assertEqual(out["reader"]["status"], "failed")
+        self.assertEqual(out["reader"]["why"], [{"code": "reader_error", "count": 7}])
+        self.assertIn("reader failed on 7", out["reader"]["reason"])
+        self.assertTrue(all(r["why"] == "reader error (exit 1)" for r in out["not_read"] if r["name"] in names))
+        self.assertEqual(self.reads(), {})
+        text = render.render_answer(self.run, "ru")
+        self.assertIn(render.LABELS["ru"]["status_failed"], text)
+        self.assertIn(render.why_text([{"code": "reader_error", "count": 7}], render.LABELS["ru"]), text)
+
+    def test_reader_crashes_on_some_hotels_make_the_module_partial(self):
+        self.to_reader()
+        command, log = orchkit.fake_reader(self.tmp.name, fail=["Hotel Sombra"])
+        out = orchestrate.availability(self.run, reader=command)
+        self.assertEqual(out["reader"]["status"], "partial")
+        self.assertEqual(out["reader"]["why"], [{"code": "reader_error", "count": 1}])
+        self.assertNotIn("sombra", self.reads())
+        # the crashed hotel is read again next time; the others are not
+        orchkit.fake_reader(self.tmp.name)
+        again = orchestrate.availability(self.run, reader=command)
+        self.assertEqual([r["name"] for r in again["read"]], ["Hotel Sombra"])
+        self.assertEqual(again["reader"]["status"], "ran")
+
+    # residual: reads.json is saved after each hotel, so an interrupted run does not read everything again
+    def test_reads_are_saved_after_each_hotel(self):
+        self.to_reader()
+        command, log = orchkit.fake_reader(self.tmp.name)
+        orchestrate.availability(self.run, reader=command)
+        self.assertEqual([c["reads_on_file"] for c in reader_calls(log)], list(range(7)))
+
+    # #5 and F2: every hotel priced above the budget, then the user raises it
+    def test_a_budget_raise_after_nothing_fits_returns_to_the_shortlist_without_new_research(self):
+        self.to_research(budget_max=100)
+        rules = read_json(orchkit.PIPELINE / "run" / "fit-rules.json")
+        rules["excluded_kinds"].append("special-format")  # no Airbnb block in this test
+        write_json(self.run / "fit-rules.json", rules)
+        orchkit.research_outputs(self.run)
+        orchestrate.collect(self.run, returned=FAMILIES)
+        orchestrate.filter_stage(self.run)
+        orchestrate.fanout(self.run, "resolver", batches=2, contract=self.contract)
+        orchkit.agent_files(self.run, *RESOLVER_FILES)
+        orchestrate.resolved(self.run)
+        command, log = orchkit.fake_reader(self.tmp.name, price=400)
+        out = orchestrate.availability(self.run, reader=command)
+        self.assertEqual((out["entries"], out["next"], self.stage()), (0, "answer", "answer"))
+        self.assertFalse((self.run / "numbers.json").exists())
+        self.assertIn(EN["relax_budget"], render.render_answer(self.run, "en"))
+        merged_before = (self.run / "merged.jsonl").read_bytes()
+        families_before = {f: (self.run / f"candidates-{f}.jsonl").read_bytes() for f in FAMILIES}
+        calls_before, history_before = len(reader_calls(log)), len(ledger.read_state(self.run)["history"])
+        out = orchestrate.checkpoint(self.run, {"change": {"budget_max": 450}}, reader=command)
+        self.assertEqual(out["next"], "shortlist")
+        self.assertEqual(out["entries"], 7)
+        self.assertEqual(self.stage(), "shortlist")
+        self.assertEqual(len(reader_calls(log)), calls_before)  # same dates: nothing read again
+        self.assertEqual((self.run / "merged.jsonl").read_bytes(), merged_before)
+        self.assertEqual({f: (self.run / f"candidates-{f}.jsonl").read_bytes() for f in FAMILIES}, families_before)
+        new_stages = [h["stage"] for h in ledger.read_state(self.run)["history"][history_before:]]
+        self.assertNotIn("research", new_stages)
+        self.assertIn("Casa Velarta", entries(self.shortlist()))
+        stage8 = (BIN.parent / "workflows" / "find-hotel" / "8-answer.md").read_text(encoding="utf-8")
+        self.assertIn("orchestrate.py checkpoint RUN RUN/reply.json", stage8.split("Nothing fits")[-1])
+
+
+class ReadCommandTest(Base):
+    """#1: the final check's reader runs take a candidate id; names and URLs never reach a shell."""
+    NAME = 'Casa $(touch pwned-name) `touch pwned-tick` "Velarta"'
+    URL = "https://casavelarta.example/$(touch pwned-url)/`touch pwned-url-tick`/"
+
+    def setUp(self):
+        super().setUp()
+        self.to_shortlist()
+        merged = read_jsonl(self.run / "merged.jsonl")
+        for candidate in merged:
+            if candidate["id"] == "casa-velarta":
+                candidate["name"] = self.NAME
+        write_jsonl(self.run / "merged.jsonl", merged)
+        resolved = read_json(self.run / "resolved.json")
+        for line in resolved["resolved"]:
+            if line["candidate"] == "Casa Velarta":
+                line["official_url"]["value"] = self.URL
+        write_json(self.run / "resolved.json", resolved)
+        self.out = self.run / "evidence-final-1.jsonl"
+
+    def pwned(self) -> list:
+        return sorted(p.name for p in Path(self.tmp.name).rglob("pwned*")) + sorted(
+            p.name for p in Path.cwd().glob("pwned*"))
+
+    def test_read_passes_the_name_and_url_as_single_arguments(self):
+        command, log = orchkit.fake_reader(self.tmp.name, price=185)
+        out = orchestrate.read(self.run, "casa-velarta", self.out, reader=command)
+        argv = reader_calls(log)[0]["argv"]
+        self.assertIn(f"--candidate={self.NAME}", argv)
+        self.assertIn(f"--url={self.URL}", argv)
+        self.assertIn("--page-timeout-s 20 --give-up-after-s 45", " ".join(argv))
+        self.assertEqual(argv[argv.index("--out") + 1], str(self.out))
+        self.assertEqual((out["status"], out["exit"], out["record"]["price_eur"]), ("ok", 0, 185))
+        self.assertEqual([r["candidate"] for r in read_jsonl(self.out)], [self.NAME])
+        self.assertEqual(self.pwned(), [])
+
+    def test_the_cli_runs_the_real_reader_without_a_shell(self):
+        result = subprocess.run([sys.executable, str(BIN / "orchestrate.py"), "read", str(self.run),
+                                 "--candidate-id", "casa-velarta", "--out", str(self.out),
+                                 "--reader-fixtures", str(ENGINES)],
+                                capture_output=True, text=True, cwd=self.tmp.name)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        out = json.loads(result.stdout)
+        self.assertEqual((out["status"], out["record"]["kind"]), ("ok", "engine_price"))
+        self.assertEqual([r["candidate"] for r in read_jsonl(self.out)], [self.NAME])
+        self.assertEqual(out["url"], self.URL)
+        self.assertEqual(self.pwned(), [])
+
+    def test_read_refuses_an_unknown_id_and_a_file_outside_the_run(self):
+        command, log = orchkit.fake_reader(self.tmp.name)
+        for cid, out in (("no-such-hotel", self.out), ("casa-velarta$(id)", self.out),
+                         ("casa-velarta", Path(self.tmp.name) / "evidence-final-1.jsonl"),
+                         ("casa-velarta", self.run / "evidence.jsonl")):
+            with self.assertRaises(runfiles.RunError, msg=(cid, out)):
+                orchestrate.read(self.run, cid, out, reader=command)
+        self.assertEqual(reader_calls(log), [])
+
+    def test_final_check_prompts_carry_ids_and_the_brief_builds_no_reader_command(self):
+        orchestrate.checkpoint(self.run, {"strike": []})
+        out = orchestrate.fanout(self.run, "final", batches=1, contract=self.contract)
+        ids = {c["id"] for c in out["agents"][0]["candidates"]}
+        self.assertIn("casa-velarta", ids)
+        self.assertIn('"id": "casa-velarta"', out["agents"][0]["prompt"])
+        brief = (BIN.parent / "references" / "briefs" / "final-check.md").read_text(encoding="utf-8")
+        self.assertIn("orchestrate.py read {run_dir} --candidate-id {id}", brief)
+        self.assertNotIn("engine_reader.py --candidate", brief)
+
 
 class CheckpointTest(Base):
     def numbers(self) -> dict:
@@ -422,7 +625,7 @@ class CheckpointTest(Base):
         families_before = {f: (self.run / f"candidates-{f}.jsonl").read_bytes() for f in FAMILIES}
         history_before = len(ledger.read_state(self.run)["history"])
         out = orchestrate.checkpoint(self.run, {"strike": [{"number": n["Hotel Sombra"], "reason": "dark rooms"}],
-                                                "change": {"check_in": "2026-11-27", "check_out": "2026-11-29"}},
+                                                "change": {"check_in": "2099-11-27", "check_out": "2099-11-29"}},
                                      reader_fixtures=ENGINES)
         self.assertEqual(out["next"], "shortlist")
         self.assertEqual((self.run / "merged.jsonl").read_bytes(), merged_before)
@@ -430,7 +633,7 @@ class CheckpointTest(Base):
         new_stages = [h["stage"] for h in ledger.read_state(self.run)["history"][history_before:]]
         self.assertNotIn("research", new_stages)
         self.assertNotIn("filter", new_stages)
-        read_now = {cid for cid, reads in self.reads().items() if any(r["check_in"] == "2026-11-27" for r in reads)}
+        read_now = {cid for cid, reads in self.reads().items() if any(r["check_in"] == "2099-11-27" for r in reads)}
         self.assertEqual(read_now, {"casa-velarta", "el-patio-lunar", "palacio-nandu", "torre-alta", "marquesa-vieja"})
         s = self.statuses()
         self.assertEqual(s["Casa Velarta"]["price_eur"], 170)
@@ -441,7 +644,7 @@ class CheckpointTest(Base):
         self.assertEqual(entries(text)["Casa Velarta"], n["Casa Velarta"])
         # R15: the strike-out and its reason are in the city cache
         struck = citycache.read(self.data / "cities" / "testgrad.md")["struck_out"]
-        self.assertIn({"name": "Hotel Sombra", "reason": "dark rooms", "date": TODAY.isoformat(), "trip": "testgrad-2026-11"},
+        self.assertIn({"name": "Hotel Sombra", "reason": "dark rooms", "date": TODAY.isoformat(), "trip": "testgrad-2099-11"},
                       [dict(r, date=TODAY.isoformat()) for r in struck])
 
     # R24: a struck hotel returns after the budget goes up
@@ -449,7 +652,7 @@ class CheckpointTest(Base):
         self.to_shortlist()
         n = self.numbers()
         orchestrate.checkpoint(self.run, {"strike": [{"number": n["Hotel Sombra"], "reason": "dark rooms"}],
-                                          "change": {"check_in": "2026-11-27", "check_out": "2026-11-29"}},
+                                          "change": {"check_in": "2099-11-27", "check_out": "2099-11-29"}},
                                reader_fixtures=ENGINES)
         out = orchestrate.checkpoint(self.run, {"change": {"budget_max": 300}}, reader_fixtures=ENGINES)
         self.assertEqual([r["name"] for r in out["apply"]["released"]], ["Hotel Sombra"])
@@ -487,7 +690,7 @@ class FinalAnswerTest(Base):
         self.to_shortlist()
         n = entries(self.shortlist())
         orchestrate.checkpoint(self.run, {"strike": [{"number": n["Hotel Sombra"], "reason": "dark rooms"}],
-                                          "change": {"check_in": "2026-11-27", "check_out": "2026-11-29"}},
+                                          "change": {"check_in": "2099-11-27", "check_out": "2099-11-29"}},
                                reader_fixtures=ENGINES)
         orchestrate.checkpoint(self.run, {"strike": [{"number": n["Palacio Ñandú"], "reason": "no online booking"}]})
         return orchestrate.fanout(self.run, "final", batches=1, contract=self.contract)
@@ -517,7 +720,7 @@ class FinalAnswerTest(Base):
         out = orchestrate.answer(self.run, today=TODAY)
         self.assertEqual(out["status"], "ok", out)
         answer_file = Path(out["answer_file"])
-        self.assertEqual(answer_file, self.data / "trips" / "testgrad-2026-11" / "hotels-shortlist.md")
+        self.assertEqual(answer_file, self.data / "trips" / "testgrad-2099-11" / "hotels-shortlist.md")
         text = answer_file.read_text(encoding="utf-8")
         self.assertIn(EN["history_skipped"], text)
         self.assertIn("€185", block(text, "Casa Velarta"))
@@ -532,7 +735,7 @@ class FinalAnswerTest(Base):
         self.assertIn("Revista Ejemplo", outlets)
         self.assertIn("Testgrad Daily", outlets)
         # struck in the same reply as the date change, Sombra stays struck; Palacio was struck after it
-        self.assertEqual(sorted(r["name"] for r in cache["struck_out"] if r["trip"] == "testgrad-2026-11"),
+        self.assertEqual(sorted(r["name"] for r in cache["struck_out"] if r["trip"] == "testgrad-2099-11"),
                          ["Hotel Sombra", "Palacio Ñandú"])
         self.assertEqual(next(r for r in cache["struck_out"] if r["name"] == "Palacio Ñandú")["reason"],
                          "no online booking")
@@ -583,7 +786,7 @@ class CliTest(Base):
     def test_resume_and_start_from_the_command_line(self):
         code, out, err = self.cli("start", "--data", self.data, "--city", "Testgrad", "--country", "Testland",
                                   "--languages", "A = Spanish, B = English, C = none", "--lang", "ru",
-                                  "--check-in", "2027-01-15", "--check-out", "2027-01-17", "--guests", 2,
+                                  "--check-in", "2099-01-15", "--check-out", "2099-01-17", "--guests", 2,
                                   "--budget-max", 180, "--dog", "yes")
         self.assertEqual(code, 0, err)
         self.assertEqual(read_json(Path(out["run_dir"]) / "trip.json")["lang"], "ru")

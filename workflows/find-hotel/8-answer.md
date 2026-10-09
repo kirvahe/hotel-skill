@@ -7,6 +7,7 @@ answer progress:
 - [ ] 1. advice.json
 - [ ] 2. Render, check, save
 - [ ] 3. Show it
+- [ ] 4. A reply to "Nothing fits" (F2 only)
 ```
 
 **1. `RUN/advice.json`**, in the request language. Every claim traces to the run's records (mentions, evidence, district notes, negative reports in `research.json`); what cannot be traced is left out or marked ❓ (SKILL.md, No Fabrication). For F2 write only `districts` and `tips`.
@@ -30,6 +31,22 @@ python3 {skill}/bin/orchestrate.py answer RUN
 - `fail`: each failure names what is wrong; most often a module without a status (record it with `orchestrate.py module`, stage 2 or 7). Fix the input and run again. Never edit the answer file.
 
 **3. Show it.** Show the saved answer to the user as is, in the request language, then end with a clickable link to `answer_file`.
+
+**4. A reply to "Nothing fits" (F2).** When the answer said nothing fits and the user replies with a new budget, new dates or a new dog answer, write `RUN/reply.json` with only `change` (the keys as in stage 6, step 3):
+
+```json
+{"change": {"budget_max": 350}}
+```
+
+```bash
+python3 {skill}/bin/orchestrate.py checkpoint RUN RUN/reply.json
+```
+
+It re-runs the fit filter and the availability check on the saved research, never new research (R24), and reopens the run. When the dates change, it reads the engines again, so run it in the background as in stage 5. Then follow `next`:
+- `shortlist`: add verdicts for any new `over_budget` hotels (stage 5, step 4), then `workflows/find-hotel/6-shortlist.md`.
+- `answer`: still nothing fits; go back to step 1 of this stage.
+
+Another district is new research: offer a new run (`start --new`).
 
 ## Spain festivos and puente risk (Spain trips)
 

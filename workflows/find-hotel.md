@@ -54,7 +54,7 @@ Stage 1 writes the language set for the run (`--languages "A = Spanish, B = Engl
 ## Booking, Airbnb and Google Maps
 
 - No tool opens a page on Booking or any Airbnb domain, logged in or not, and nothing is booked or paid (R21). Booking appears only as dated links and as `site:booking.com` search results; Airbnb only as dated search links for special formats; Google Maps only as links. `bin/links.py` builds every link.
-- Booking engines are read only through `bin/engine_reader.py`: by `orchestrate.py availability` and by the final-check agents. No browser or screen tool is used anywhere in the run.
+- Booking engines are read only through `bin/engine_reader.py`: by `orchestrate.py availability`, and by the final-check agents through `orchestrate.py read`, which takes the hotel's name and URL from the run files. A name or URL from the web is never typed into a command line. No browser or screen tool is used anywhere in the run.
 
 ## Reporting what ran
 

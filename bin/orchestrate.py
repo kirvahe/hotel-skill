@@ -20,6 +20,8 @@ Usage (RUN is the run folder, DATA the skill's data folder):
     orchestrate.py filter RUN                                merge, research summary, fit filter
     orchestrate.py resolved RUN                              resolver files in, fit filter again
     orchestrate.py availability RUN [--reader-fixtures DIR]  engine reader on what still needs a read, status table
+    orchestrate.py read RUN --candidate-id ID --out RUN/evidence-final-N.jsonl [--reader-fixtures DIR]
+                                                             one engine-reader run for the final check
     orchestrate.py ask RUN [--lang CODE]                     the shortlist and the question-tool payload
     orchestrate.py checkpoint RUN REPLY_FILE [--reader-fixtures DIR]
     orchestrate.py finalized RUN                             final-check files in, status again
@@ -36,6 +38,7 @@ instead of opening a browser; tests use it, a real run never does.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import re
 import subprocess
@@ -73,6 +76,8 @@ AGENT_MODEL = "opus"  # KTD14: research, resolver and final-check agents run on 
 NO_BROWSER = "background browser not installed"
 CAP_LABELS = {"threads read in full": "thread cap", "sub scans": "scan cap", "pages per scan": "scan pages"}
 APPROVAL = "set at approval"
+CANDIDATE_ID = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)*")  # merge_candidates ids: ledger.city_slug of the name
+READ_STATUS = {EXIT_OK: "ok", EXIT_REFUSED: "refused", EXIT_SKIPPED: "skipped", None: "timeout"}
 
 
 class Stop(Exception):
@@ -124,9 +129,11 @@ def resume(data: Path, city: str | None = None, today: date | None = None) -> di
 
 
 def close(run: Path, reason: str) -> dict:
-    """End a run without an answer: a stale run (dates past) or one the user abandons. Nothing else changes."""
+    """End a run without an answer: a stale run (dates past) or one the user abandons. Nothing else changes.
+    A run folder without a valid trip.json (left by a start that failed) can be closed too."""
     run = Path(run)
-    runfiles.load_trip(run)
+    if not (run.is_dir() and run.parent.parent.name == "trips"):
+        raise runfiles.RunError(f"{run} is not a run folder (DATA/trips/{{city}}-{{YYYY-MM}}/run)")
     state = ledger.write_state(run, stage="done", waiting_for=[])
     state["closed_reason"] = reason
     runfiles.write_json(run / runfiles.STATE, state)
@@ -139,15 +146,29 @@ def _archive(run: Path) -> Path:
     while target.exists():
         target, n = run.with_name(f"run-{stamp}-{n}"), n + 1
     run.rename(target)
+    answer = runfiles.trip_dir(run) / runfiles.ANSWER_FILE
+    if answer.is_file():  # the archived run keeps the answer it gave; the new run writes its own
+        answer.rename(target / runfiles.ANSWER_FILE)
     return target
+
+
+def cache_run_id(run: Path) -> str:
+    """The run's id in the city cache: the trip folder's name, with #N for the Nth run of that folder."""
+    return runfiles.load_trip(run).get("run_id") or runfiles.trip_dir(run).name
 
 
 def start(data: Path, *, city: str, country: str, languages: str, lang: str, check_in: str, check_out: str,
           guests: int, budget_max: float, dog: bool, budget_min: float = 0, occasion: str = "",
           new: bool = False, today: date | None = None) -> dict:
-    """Open the run folder for a trip. An unfinished run for the same city and month is never overwritten."""
+    """Open the run folder for a trip. An unfinished run for the same city and month is never overwritten.
+    The trip is checked before anything is archived or created, so a rejected start changes nothing."""
     data = Path(data)
-    run = data / "trips" / f"{ledger.city_slug(city)}-{check_in[:7]}" / "run"
+    fields = dict(city=city, check_in=check_in, check_out=check_out, guests=guests, budget_min=budget_min,
+                  budget_max=budget_max, dog=dog)
+    try:
+        run = ledger.run_path(data, ledger.new_trip(**fields))
+    except ValueError as error:
+        raise runfiles.RunError(f"trip: {error}")
     archived = None
     if run.exists():
         state = ledger.read_state(run)
@@ -160,13 +181,11 @@ def start(data: Path, *, city: str, country: str, languages: str, lang: str, che
                                    f"{old.get('check_out')} is at stage '{state['stage']}'. Continue it, or start "
                                    "again with --new (the old run folder is archived, not deleted)."})
         archived = str(_archive(run))
-    try:
-        run = ledger.init_run(data, city=city, check_in=check_in, check_out=check_out, guests=guests,
-                              budget_min=budget_min, budget_max=budget_max, dog=dog)
-    except ValueError as error:
-        raise runfiles.RunError(f"trip: {error}")
+    run = ledger.init_run(data, **fields)
     trip = runfiles.load_trip(run)
-    trip.update(country=country, languages=languages, lang=lang, occasion=occasion)
+    runs_before = len(list(runfiles.trip_dir(run).glob("run-*")))
+    trip.update(country=country, languages=languages, lang=lang, occasion=occasion,
+                run_id=runfiles.trip_dir(run).name + (f"#{runs_before + 1}" if runs_before else ""))
     runfiles.write_json(run / runfiles.TRIP, trip)
     _set_stage(run, "context")
     return {"run_dir": str(run), "archived": archived, "stage": "context", "stage_file": _stage_file("context")}
@@ -316,7 +335,8 @@ def _official_urls(run: Path, merged: list) -> dict:
     out = {}
     for candidate in merged:
         resolved = [(line.get("official_url") or {}).get("value") for line in by_id[candidate["id"]]]
-        out[candidate["id"]] = next((u for u in reversed(resolved) if u), "") or candidate.get("official_url", "")
+        url = next((u for u in reversed(resolved) if u), "") or candidate.get("official_url", "")
+        out[candidate["id"]] = url if isinstance(url, str) and url.startswith(("http://", "https://")) else ""
     return out
 
 
@@ -380,8 +400,8 @@ def fanout(run: Path, step: str, batches: int | None = None, contract: Path = CO
     extra = {"judgment_rules": taste["judgment_rules"]} if step == "resolver" else {}
     agents, plan = [], {}
     for n, part in enumerate(_batches(ids, batches), 1):
-        candidates = [{"name": by_id[cid]["name"], "area": by_id[cid].get("area", ""), "official_url": urls.get(cid) or None}
-                      for cid in part]
+        candidates = [{"id": cid, "name": by_id[cid]["name"], "area": by_id[cid].get("area", ""),
+                       "official_url": urls.get(cid) or None} for cid in part]
         values = dict(common, batch=str(n), candidates=candidates, dog_note=ctx["dog_note"], **extra)
         agents.append({"name": f"{agent}-{n}", "batch": n, "brief": f"{agent}.md", "candidates": candidates,
                        "prompt": _prompt(agent, f"{agent}.md", values, caps["agents"][agent], caps["credit_floor"], n)})
@@ -545,10 +565,38 @@ def _fixture_for(fixtures: Path, cid: str, check_in: str):
     return None
 
 
+def _run_reader(reader: list | None, name: str, url: str, trip: dict, out: Path, fixture: Path | None) -> tuple:
+    """(exit code, stdout, stderr) of one engine-reader run; the exit code is None when the reader hung.
+
+    The name and the URL come from web research, so they go to the reader as single arguments of an
+    argument list: no shell ever reads them, and "--candidate=…" keeps a value that starts with "-" a value.
+    """
+    command = (reader or READER) + [
+        f"--candidate={name}", f"--url={url}", "--check-in", trip["check_in"], "--check-out", trip["check_out"],
+        "--guests", str(trip["guests"]), "--out", str(out),
+        "--page-timeout-s", str(PAGE_TIMEOUT_S), "--give-up-after-s", str(GIVE_UP_AFTER_S)]
+    if fixture:
+        command += ["--fixture", str(fixture)]
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, timeout=HUNG_READER_S)
+    except subprocess.TimeoutExpired:
+        return None, "", ""
+    return result.returncode, result.stdout, result.stderr
+
+
+def _reader_record(stdout: str):
+    """The evidence record the reader printed as its last line, or None."""
+    lines = stdout.strip().splitlines()
+    try:
+        record = json.loads(lines[-1]) if lines else None
+    except json.JSONDecodeError:
+        return None
+    return record if isinstance(record, dict) else None
+
+
 def _over_budget(run: Path, trip: dict, fit: dict, status: dict, struck: dict, merged: list) -> list:
-    """Kept hotels priced above the budget, with the model's R25 verdict on each. A verdict names a
-    hotel by any of its names, as render.build_view matches it; a not_better verdict wins over a
-    clearly_better one for the same hotel."""
+    """Kept hotels priced above the budget, with the model's R25 verdict on each (runfiles.budget_verdict,
+    the rule render.build_view shows them by)."""
     nights = runfiles.nights(trip)
     verdicts = runfiles.optional_json(run, runfiles.VERDICTS, {})
     by_id = {c["id"]: c for c in merged}
@@ -559,11 +607,7 @@ def _over_budget(run: Path, trip: dict, fit: dict, status: dict, struck: dict, m
             continue
         per_night = render.nightly(state["price_eur"], state.get("price_basis") or "per_night", nights)
         if per_night > trip["budget"]["max"]:
-            candidate = by_id.get(c["id"], c)
-            verdict = None
-            for key in ("clearly_better", "not_better"):
-                if runfiles.records_naming(candidate, verdicts.get(key) or []):
-                    verdict = key
+            verdict = runfiles.budget_verdict(by_id.get(c["id"], c), verdicts)
             pool.append({"name": c["name"], "price_eur": state["price_eur"], "price_basis": state.get("price_basis"),
                          "verdict": verdict})
     return pool
@@ -581,14 +625,15 @@ def availability(run: Path, reader_fixtures: Path | None = None, reader: list | 
     urls = _official_urls(run, merged)
     reads = runfiles.optional_json(run, runfiles.READS, {"reads": {}})
     dates = (trip["check_in"], trip["check_out"])
-    read, not_read, kinds, skipped_reader = [], [], Counter(), False
+    read, not_read, errors, kinds = [], [], [], Counter()
+    skipped_reader = already_read = False
     for c in runfiles.kept_hotels(fit, struck):
         cid = c["id"]
         why = None
         if status[cid]["reason"] == "closure":
             why = "closed on the trip dates"
         elif any((r["check_in"], r["check_out"]) == dates for r in reads["reads"].get(cid, [])):
-            why = "already read for these dates"
+            why, already_read = "already read for these dates", True
         elif not urls.get(cid):
             why = "no official site found"
         elif skipped_reader:
@@ -599,30 +644,23 @@ def availability(run: Path, reader_fixtures: Path | None = None, reader: list | 
         if why:
             not_read.append({"name": c["name"], "why": why})
             continue
-        command = (reader or READER) + [
-            "--candidate", c["name"], "--url", urls[cid], "--check-in", trip["check_in"],
-            "--check-out", trip["check_out"], "--guests", str(trip["guests"]),
-            "--out", str(run / runfiles.READER_EVIDENCE),
-            "--page-timeout-s", str(PAGE_TIMEOUT_S), "--give-up-after-s", str(GIVE_UP_AFTER_S)]
-        if fixture:
-            command += ["--fixture", str(fixture)]
-        try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=HUNG_READER_S)
-            code, out = result.returncode, result.stdout
-        except subprocess.TimeoutExpired:
-            code, out = -1, ""
+        code, out, _ = _run_reader(reader, c["name"], urls[cid], trip, run / runfiles.READER_EVIDENCE, fixture)
         if code == EXIT_SKIPPED:
             skipped_reader = True
             not_read.append({"name": c["name"], "why": NO_BROWSER})
             continue
         if code in (EXIT_OK, EXIT_REFUSED):
-            kind = json.loads(out.strip().splitlines()[-1]).get("kind", "") if out.strip() else ""
+            kind = (_reader_record(out) or {}).get("kind", "")
             kinds[kind] += 1
             reads["reads"].setdefault(cid, []).append({"check_in": dates[0], "check_out": dates[1], "exit": code,
                                                        "url": urls[cid], "at": ledger.now()})
+            # saved after each hotel: a run cut short keeps what it read and is not read again
+            runfiles.write_json(run / runfiles.READS, reads)
             read.append({"name": c["name"], "kind": kind})
         else:
-            not_read.append({"name": c["name"], "why": f"reader error (exit {code})"})
+            errors.append(c["name"])
+            not_read.append({"name": c["name"],
+                             "why": "reader timed out" if code is None else f"reader error (exit {code})"})
     runfiles.write_json(run / runfiles.READS, reads)
     evidence = runfiles.merge_evidence(run)
     table = status_table.status_run(run)
@@ -630,6 +668,9 @@ def availability(run: Path, reader_fixtures: Path | None = None, reader: list | 
     modules = runfiles.optional_json(run, runfiles.MODULES, {}).get("modules") or {}
     if skipped_reader:
         reader_module = set_module(run, "reader", "skipped", why=[{"code": "reader_missing"}])
+    elif errors:  # a crash or a hang is not "nothing to read": failed, or partial when other reads stand (R22)
+        reader_module = set_module(run, "reader", "partial" if read or already_read else "failed",
+                                   why=[{"code": "reader_error", "count": len(errors)}])
     elif read:
         reader_module = set_module(run, "reader", "ran")
     elif modules.get("reader"):
@@ -684,6 +725,38 @@ def checkpoint(run: Path, reply: dict, reader_fixtures: Path | None = None, read
 
 # ---------------------------------------------------------------- stage 7: final check
 
+def read(run: Path, candidate_id: str, out: Path, reader_fixtures: Path | None = None,
+         reader: list | None = None) -> dict:
+    """Stage 7: one engine-reader run for one kept candidate, for a final-check agent (R16).
+
+    The agent passes only the candidate id from its prompt. The name and the official URL are looked up
+    in the run files and handed to the reader as single arguments, so no web-sourced text is ever typed
+    into a shell. The reader appends its record to OUT, an evidence-*.jsonl part in the run folder.
+    """
+    run = Path(run)
+    if not CANDIDATE_ID.fullmatch(str(candidate_id)):
+        raise runfiles.RunError("--candidate-id takes the id given in the prompt: lowercase letters, digits and hyphens")
+    out = Path(out).expanduser()
+    if out.parent.resolve() != run.resolve() or not fnmatch.fnmatch(out.name, runfiles.EVIDENCE_PARTS):
+        raise runfiles.RunError(f"--out must be an {runfiles.EVIDENCE_PARTS} file in {run}")
+    trip = runfiles.load_trip(run)
+    merged = runfiles.load_merged(run)
+    candidate = next((c for c in merged if c["id"] == candidate_id), None)
+    if candidate is None:
+        raise runfiles.RunError(f"no candidate {candidate_id} in this run")
+    url = _official_urls(run, merged)[candidate_id]
+    if not url:
+        raise runfiles.RunError(f"{candidate['name']} has no official site in this run: there is no engine to read")
+    fixture = _fixture_for(reader_fixtures, candidate_id, trip["check_in"]) if reader_fixtures else None
+    if reader_fixtures and fixture is None:
+        raise runfiles.RunError(f"no saved page for {candidate_id} (fixture mode)")
+    code, stdout, stderr = _run_reader(reader, candidate["name"], url, trip, out, fixture)
+    status = READ_STATUS.get(code, "error")
+    message = "" if status == "ok" else next(iter((stderr or stdout).strip().splitlines()[-1:]), "")
+    return {"id": candidate_id, "candidate": candidate["name"], "url": url, "status": status, "exit": code,
+            "record": _reader_record(stdout), "message": message}
+
+
 def finalized(run: Path) -> dict:
     """Stage 7: the final check's rates and evidence; removal only on R12 evidence."""
     run = Path(run)
@@ -735,7 +808,7 @@ def write_cache(run: Path, final: bool, today: date | None = None, view: dict | 
     A final write takes the answer's view when the caller has one."""
     run = Path(run)
     trip = runfiles.load_trip(run)
-    run_id = runfiles.trip_dir(run).name
+    run_id = cache_run_id(run)
     research = runfiles.optional_json(run, runfiles.RESEARCH, {})
     sources = [{"family": s.get("family", ""), "outlet": s.get("outlet", ""), "kind": s.get("kind", ""),
                 "language": s.get("language", ""), "where": s.get("url") or s.get("query") or s.get("outlet", ""),
@@ -824,6 +897,11 @@ def main(argv: list) -> int:
     p = sub.add_parser("availability")
     p.add_argument("run")
     p.add_argument("--reader-fixtures")
+    p = sub.add_parser("read")
+    p.add_argument("run")
+    p.add_argument("--candidate-id", required=True)
+    p.add_argument("--out", required=True)
+    p.add_argument("--reader-fixtures")
     p = sub.add_parser("ask")
     p.add_argument("run")
     p.add_argument("--lang")
@@ -868,6 +946,8 @@ def main(argv: list) -> int:
             out = resolved(run)
         elif args.cmd == "availability":
             out = availability(run, fixtures)
+        elif args.cmd == "read":
+            out = read(run, args.candidate_id, Path(args.out), fixtures)
         elif args.cmd == "ask":
             out = ask(run, args.lang)
         elif args.cmd == "checkpoint":

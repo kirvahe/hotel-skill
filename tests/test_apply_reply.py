@@ -120,6 +120,19 @@ class ApplyReplyTest(unittest.TestCase):
             apply_reply.apply(self.run, {"change": {"check_in": "2026-11-29", "check_out": "2026-11-27"}})
         self.assertEqual(read_json(self.run / "trip.json")["check_in"], "2026-11-20")
 
+    # #5: after "nothing fits" no shortlist was numbered, yet a change must still apply
+    def test_a_change_needs_no_entry_numbers_but_a_strike_does(self):
+        run = runkit.make_run(Path(self.tmp.name) / "unnumbered")
+        runkit.pipeline(run)
+        self.assertFalse((run / "numbers.json").exists())
+        with self.assertRaises(runfiles.RunError) as ctx:
+            apply_reply.apply(run, {"strike": [{"number": 1}], "change": {"budget_max": 300}})
+        self.assertIn("render the shortlist first", str(ctx.exception))
+        self.assertEqual(read_json(run / "trip.json")["budget"]["max"], 200)
+        result = apply_reply.apply(run, {"change": {"budget_max": 300}})
+        self.assertEqual(result["changed"], {"budget_max": 300})
+        self.assertEqual(read_json(run / "trip.json")["budget"]["max"], 300)
+
     def test_cli_reads_the_reply_file(self):
         reply = Path(self.tmp.name) / "reply.json"
         reply.write_text(json.dumps({"strike": [{"number": self.numbers["Hotel Sombra"], "reason": "x"}]}), encoding="utf-8")

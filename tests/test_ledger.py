@@ -36,6 +36,15 @@ class CandidateValidationTest(unittest.TestCase):
         errors = ledger.validate_candidate(load("candidate-tripadvisor.json"))
         self.assertTrue(any("banned" in e for e in errors), errors)
 
+    # residual: a research family's official_url reaches the engine reader, so it must be http(s)
+    def test_official_url_must_be_http_or_https(self):
+        record = load("candidate-valid.json")
+        for url in ("https://casa.example/", "http://casa.example/reservas", None, ""):
+            self.assertEqual(ledger.validate_candidate(dict(record, official_url=url)), [], url)
+        for url in ("file:///etc/hosts", "javascript:alert(1)", "casa.example", {"value": "https://casa.example/"}):
+            errors = ledger.validate_candidate(dict(record, official_url=url))
+            self.assertTrue(any("official_url" in e for e in errors), url)
+
     def test_validate_file_reports_line_numbers(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "candidates-reddit.jsonl"
@@ -126,9 +135,16 @@ class ResolvedValidationTest(unittest.TestCase):
         self.assertEqual(ledger.validate_resolved(dict(self.RECORD, official_url=None, judgments=[])), [])
 
     def test_official_url_on_booking_or_airbnb_fails(self):
-        for url in ("https://www.booking.com/hotel/xx/casa.html", "https://www.airbnb.es/rooms/1"):
+        for url in ("https://www.booking.com/hotel/xx/casa.html", "https://www.airbnb.es/rooms/1", "https://booking.com./x"):
             record = dict(self.RECORD, official_url=dict(self.RECORD["official_url"], value=url))
             self.assertTrue(any("official_url" in e for e in ledger.validate_resolved(record)), url)
+
+    # #14: the host decides, as for the guard and the reader; a Booking name elsewhere in the URL does not
+    def test_official_url_naming_booking_outside_the_host_passes(self):
+        for url in ("https://casadelejemplo.example/?utm_source=booking.com", "https://reservas.myhotelbooking.com/",
+                    "https://casadelejemplo.example/from/airbnb.es"):
+            record = dict(self.RECORD, official_url=dict(self.RECORD["official_url"], value=url))
+            self.assertEqual(ledger.validate_resolved(record), [], url)
 
     def test_a_fail_verdict_needs_a_quote_and_a_reason(self):
         judgment = {"rule": "large or mainstream hotel", "verdict": "fail", "reason": "240 rooms"}
@@ -212,6 +228,17 @@ class RunStateTest(unittest.TestCase):
             trip = json.loads((run_dir / "trip.json").read_text(encoding="utf-8"))
             self.assertEqual(ledger.validate_trip(trip), [])
             self.assertEqual(ledger.read_state(run_dir)["stage"], "intake")
+
+    # #11: an invalid trip is refused before any folder exists
+    def test_init_with_an_invalid_trip_creates_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for bad in (dict(check_in="2099-01-17", check_out="2099-01-15"), dict(check_in="garbage", check_out="2099-01-15"),
+                        dict(guests=0)):
+                args = dict(dict(city="Testgrad", check_in="2099-01-15", check_out="2099-01-17", guests=2,
+                                 budget_min=0, budget_max=200, dog=False), **bad)
+                with self.assertRaises(ValueError, msg=bad):
+                    ledger.init_run(Path(tmp), **args)
+            self.assertFalse((Path(tmp) / "trips").exists())
 
     def test_state_survives_write_and_reread(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -319,6 +319,21 @@ class RenderTest(unittest.TestCase):
         self.assertNotIn("background browser", report)
         self.assertNotIn("read 4 engines", report)
 
+    def test_reader_errors_are_reported_with_their_count(self):
+        why = [{"code": "reader_error", "count": 3}]
+        self.assertEqual(render.why_text(why, EN), "the reader failed on 3 hotel(s)")
+        self.assertIn("3", render.why_text(why, render.LABELS["ru"]))
+        self.assertNotEqual(render.why_text(why, render.LABELS["ru"]), render.why_text(why, EN))
+
+    # #13: a hotel named in both verdict lists is not better: it is not shown at all
+    def test_a_not_better_verdict_wins_over_a_clearly_better_one(self):
+        verdict = {"candidate": "Hotel Torre Alta", "reason": "the only one with a valley view from every room"}
+        write_json(self.run / "verdicts.json", {"clearly_better": [verdict], "not_better": [verdict]})
+        self.ready()
+        for text in (render.render_shortlist(self.run, "en"), render.render_answer(self.run, "en")):
+            self.assertNotIn("**Hotel Torre Alta**", text)
+            self.assertNotIn(EN["beyond_budget"], text)
+
     # The checkpoint through the question tool: at most 4 questions of 2 to 4 options
     def test_question_payload_splits_the_entries(self):
         self.ready()

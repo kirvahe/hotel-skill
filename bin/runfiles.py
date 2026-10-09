@@ -94,6 +94,24 @@ def records_naming(candidate: dict, records: list, key: str = "candidate") -> li
     return [r for r in records if name_key(r.get(key, "")) in keys]
 
 
+def budget_verdict(candidate: dict, verdicts: dict):
+    """The model's R25 call on an over-budget hotel: "clearly_better", "not_better" or None.
+
+    verdicts.json names a hotel by any of its names; a hotel named in both lists is not better.
+    The over-budget pool (orchestrate.py) and the shortlist (render.py) both decide by this.
+    """
+    if verdict_records(candidate, verdicts, "not_better"):
+        return "not_better"
+    if verdict_records(candidate, verdicts, "clearly_better"):
+        return "clearly_better"
+    return None
+
+
+def verdict_records(candidate: dict, verdicts: dict, key: str) -> list:
+    """The verdicts.json records under key that name this candidate."""
+    return records_naming(candidate, (verdicts or {}).get(key) or [])
+
+
 def match_by_name(merged: list, records: list, key: str = "candidate") -> tuple[dict, list]:
     """Group records by the merged candidate whose name key they share: ({id: [records]}, [unmatched names])."""
     by_id: dict = {c["id"]: [] for c in merged}

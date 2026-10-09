@@ -29,6 +29,10 @@ import unicodedata
 from datetime import date, datetime, timezone
 from pathlib import Path
 
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+from guard_hook import refused_host  # noqa: E402  (one Booking/Airbnb host rule for the ledger, the guard and the reader, R21)
+
 FAMILIES = ("curated-press", "reddit", "booking-search")
 KINDS = ("hotel", "special-format", "apartment", "bnb", "hostal", "guesthouse")
 STAGES = ("intake", "context", "research", "filter", "availability", "shortlist", "final", "answer", "done")
@@ -37,7 +41,6 @@ ENGINE_KINDS = ("engine_price", "engine_no_rooms")
 PRICE_BASES = ("per_night", "unknown")
 PET_EVIDENCE_VALUES = ("allowed", "not allowed", "restricted", "hotel-level only")
 VERDICTS = ("pass", "fail")
-OTA_DOMAINS = ("booking.com", "airbnb.")
 BANNED_DOMAINS = ("tripadvisor.", "yelp.", "instagram.com")
 REDDIT_PERMALINK = re.compile(r"reddit\.com/r/[^/]+/comments/[^/]+")
 CYRILLIC = {
@@ -63,6 +66,26 @@ def is_date(value) -> bool:
         return True
     except ValueError:
         return False
+
+
+def ota_host(url) -> str | None:
+    """The Booking or Airbnb host of a URL (R21), by the guard's host rule; None for any other URL.
+
+    A URL written without a scheme is read as http, so "booking.com/hotel/..." still counts.
+    """
+    text = str(url or "").strip()
+    if not text:
+        return None
+    if "://" not in text[:16]:
+        text = "http://" + text.lstrip("/")
+    try:
+        return refused_host(text)
+    except ValueError:  # a malformed URL (e.g. a broken IPv6 host) names no host
+        return None
+
+
+def _web_url(value) -> bool:
+    return isinstance(value, str) and value.startswith(("http://", "https://"))
 
 
 def _source_errors(obj: dict, where: str) -> list[str]:
@@ -93,6 +116,8 @@ def validate_candidate(record: dict) -> list[str]:
             errors.append(f"{where}: family must be one of {', '.join(FAMILIES)}")
         if mention.get("family") == "reddit" and not REDDIT_PERMALINK.search(str(mention.get("url", ""))):
             errors.append(f"{where}: a Reddit mention needs the permalink of the thread or comment that was read")
+    if record.get("official_url") and not _web_url(record["official_url"]):
+        errors.append("official_url must be an http(s) URL of the hotel's own site")
     for field in ("rooms", "booking_score", "pet_policy"):
         if record.get(field):
             errors += _source_errors(record[field], field)
@@ -132,11 +157,11 @@ def validate_resolved(record: dict) -> list[str]:
     errors = [] if record.get("candidate") else ["no candidate name"]
     official = record.get("official_url")
     if official is not None:
-        if not isinstance(official, dict) or not str(official.get("value", "")).startswith(("http://", "https://")):
+        if not isinstance(official, dict) or not _web_url(official.get("value")):
             errors.append("official_url must be null or {value: an http(s) URL, source_url, quote}")
         else:
             errors += _source_errors(official, "official_url")
-            if any(domain in official["value"].lower() for domain in OTA_DOMAINS):
+            if ota_host(official["value"]):
                 errors.append("official_url: a Booking or Airbnb page is not the hotel's own site")
     judgments = record.get("judgments", [])
     if not isinstance(judgments, list):
@@ -244,19 +269,32 @@ def now() -> str:
 _now = now
 
 
-def init_run(data_dir: Path, *, city: str, check_in: str, check_out: str, guests: int,
-             budget_min: float, budget_max: float, dog: bool) -> Path:
-    slug = city_slug(city)
-    run_dir = Path(data_dir) / "trips" / f"{slug}-{check_in[:7]}" / "run"
-    run_dir.mkdir(parents=True, exist_ok=True)
+def new_trip(*, city: str, check_in: str, check_out: str, guests: int, budget_min: float, budget_max: float,
+             dog: bool) -> dict:
+    """The trip.json record of a new run; ValueError names every problem. Nothing is written."""
     trip = {
-        "city": city, "city_slug": slug, "check_in": check_in, "check_out": check_out,
+        "city": city, "city_slug": city_slug(city), "check_in": check_in, "check_out": check_out,
         "guests": guests, "budget": {"min": budget_min, "max": budget_max, "currency": "EUR"},
         "dog": dog, "created": now(),
     }
     errors = validate_trip(trip)
     if errors:
         raise ValueError("; ".join(errors))
+    return trip
+
+
+def run_path(data_dir: Path, trip: dict) -> Path:
+    """DATA/trips/{city-slug}-{YYYY-MM}/run for a valid trip record."""
+    return Path(data_dir) / "trips" / f"{trip['city_slug']}-{trip['check_in'][:7]}" / "run"
+
+
+def init_run(data_dir: Path, *, city: str, check_in: str, check_out: str, guests: int,
+             budget_min: float, budget_max: float, dog: bool) -> Path:
+    """Create the run folder. The trip is checked first, so a rejected trip leaves no folder behind."""
+    trip = new_trip(city=city, check_in=check_in, check_out=check_out, guests=guests,
+                    budget_min=budget_min, budget_max=budget_max, dog=dog)
+    run_dir = run_path(data_dir, trip)
+    run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "trip.json").write_text(json.dumps(trip, ensure_ascii=False, indent=2), encoding="utf-8")
     write_state(run_dir, stage="intake", waiting_for=[])
     return run_dir

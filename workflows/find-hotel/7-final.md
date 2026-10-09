@@ -16,7 +16,7 @@ python3 {skill}/bin/orchestrate.py fanout RUN final --batches 3
 
 `nothing_to_check`: no kept hotel has its own website (or only Airbnb entries were kept); go to stage 8. `no_url` names kept hotels without a website: they keep their ❓. Exit 3: caps, as in stage 3.
 
-**2. Final-check agents.** One message, one Agent call per printed agent: `model: "opus"`, `prompt` verbatim. Each runs the engine reader once per hotel. When every agent has returned:
+**2. Final-check agents.** One message, one Agent call per printed agent: `model: "opus"`, `prompt` verbatim. Each runs the engine reader once per hotel, through `orchestrate.py read` with the hotel's id; the agents never type a hotel name or URL into a command. When every agent has returned:
 
 ```bash
 python3 {skill}/bin/orchestrate.py finalized RUN

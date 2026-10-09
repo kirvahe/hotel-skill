@@ -44,7 +44,7 @@ Read `workflows/find-hotel.md` (shared run rules) once per session, then one sta
 | 5 availability | `workflows/find-hotel/5-availability.md` | Resolver agents (official site, closures, judgment calls), then each hotel's own booking engine |
 | 6 shortlist | `workflows/find-hotel/6-shortlist.md` | The user strikes out entries or changes dates, budget or the dog answer |
 | 7 final | `workflows/find-hotel/7-final.md` | Final-check agents: price, rate and cancellation on the hotel's own site |
-| 8 answer | `workflows/find-hotel/8-answer.md` | The answer, its output check and the city cache |
+| 8 answer | `workflows/find-hotel/8-answer.md` | The answer, its output check and the city cache; after "Nothing fits", a new budget, dates or dog answer goes back through the checkpoint |
 
 <essential_principles>
 ## How This Skill Works

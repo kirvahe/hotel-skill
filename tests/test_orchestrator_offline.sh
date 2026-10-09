@@ -54,7 +54,7 @@ EOF
 
 # ---- Stage 1: intake (the model asked the R1 question; the answers go into start)
 orch start --data "$DATA" --city Testgrad --country Testland --languages "A = Spanish, B = English, C = none" \
-  --lang en --check-in 2026-11-20 --check-out 2026-11-22 --guests 2 --budget-max 200 --dog no \
+  --lang en --check-in 2099-11-20 --check-out 2099-11-22 --guests 2 --budget-max 200 --dog no \
   --occasion city-break >"$OUT/start.json"
 RUN="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["run_dir"])' "$OUT/start.json")"
 expect "start opens the run at stage 2" 'J(RUN/"state.json")["stage"] == "context"'
@@ -126,7 +126,7 @@ MERGED_BEFORE="$(sha "$RUN/merged.jsonl")"
 CANDIDATES_BEFORE="$(sha "$RUN"/candidates-*.jsonl)"
 
 # AE8 with a mixed reply: a strike-out with a reason and new dates
-printf '{"strike": [{"number": %s, "reason": "dark rooms"}], "change": {"check_in": "2026-11-27", "check_out": "2026-11-29"}}' "$SOMBRA" >"$OUT/reply1.json"
+printf '{"strike": [{"number": %s, "reason": "dark rooms"}], "change": {"check_in": "2099-11-27", "check_out": "2099-11-29"}}' "$SOMBRA" >"$OUT/reply1.json"
 orch checkpoint "$RUN" "$OUT/reply1.json" --reader-fixtures "$FIX/engines" >"$OUT/checkpoint1.json"
 if [[ "$(sha "$RUN/merged.jsonl")" == "$MERGED_BEFORE" && "$(sha "$RUN"/candidates-*.jsonl)" == "$CANDIDATES_BEFORE" ]]; then
   pass "AE8: no new research (merged candidates and family files unchanged)"
@@ -134,10 +134,10 @@ else
   fail "AE8: no new research (merged candidates and family files unchanged)"
 fi
 expect "AE8: only the availability stage re-ran, for the hotels still in play" \
-  'sorted(cid for cid, reads in J(RUN/"reads.json")["reads"].items() if any(r["check_in"] == "2026-11-27" for r in reads)) == ["casa-velarta", "el-patio-lunar", "marquesa-vieja", "palacio-nandu", "torre-alta"] and "research" not in [h["stage"] for h in J(RUN/"state.json")["history"][-3:]]'
+  'sorted(cid for cid, reads in J(RUN/"reads.json")["reads"].items() if any(r["check_in"] == "2099-11-27" for r in reads)) == ["casa-velarta", "el-patio-lunar", "marquesa-vieja", "palacio-nandu", "torre-alta"] and "research" not in [h["stage"] for h in J(RUN/"state.json")["history"][-3:]]'
 orch ask "$RUN" >"$OUT/ask3.json"
 expect "the hotel struck in the same reply stays off the new shortlist" \
-  '"**Hotel Sombra**" not in J("'"$OUT"'/ask3.json")["text"] and "2026-11-27" in J("'"$OUT"'/ask3.json")["text"]'
+  '"**Hotel Sombra**" not in J("'"$OUT"'/ask3.json")["text"] and "2099-11-27" in J("'"$OUT"'/ask3.json")["text"]'
 expect "R15: the strike-out and its reason are in the city cache" \
   '"| Hotel Sombra | dark rooms |" in T(DATA/"cities"/"testgrad.md")'
 
@@ -155,6 +155,10 @@ expect "a reply without a change moves to the final check" 'J("'"$OUT"'/checkpoi
 
 # ---- Stage 7: final check
 orch fanout "$RUN" final --batches 1 --contract "$CONTRACT" >"$OUT/final.json"
+# an agent's reader run: only the candidate id goes on the command line
+orch read "$RUN" --candidate-id casa-velarta --out "$RUN/evidence-final-1.jsonl" --reader-fixtures "$FIX/engines" >"$OUT/read.json"
+expect "the final check reads a hotel's engine by its id, for the new dates" \
+  'J("'"$OUT"'/read.json")["status"] == "ok" and J("'"$OUT"'/read.json")["record"]["dates_shown"]["check_in"] == "2099-11-27" and L(RUN/"evidence-final-1.jsonl")[-1]["candidate"] == "Casa Velarta"'
 cp "$FIX/agents/final-1.jsonl" "$RUN/"
 # the final check reads after the availability stage, so its records carry a later read time
 python3 - "$FIX/agents/evidence-final-1.jsonl" "$RUN/evidence-final-1.jsonl" <<'EOF'
@@ -175,7 +179,7 @@ expect "a hotel the final check cannot read keeps its ❓" \
 # ---- Stage 8: the answer
 printf '%s' '{"overview": "City-break pick in Testgrad — quiet old-town houses.", "entries": [{"candidate": "Casa Velarta", "why": "a restored merchant house with twelve rooms", "vibe": "like your 8 anchor"}], "districts": ["Old Quarter: quiet lanes, ten minutes on foot to everything"], "tips": []}' >"$RUN/advice.json"
 orch answer "$RUN" >"$OUT/answer.json"; code=$?
-ANSWER="$DATA/trips/testgrad-2026-11/hotels-shortlist.md"
+ANSWER="$DATA/trips/testgrad-2099-11/hotels-shortlist.md"
 expect "the answer is saved in the trip folder and passes the output check" \
   "$code == 0 and J('$OUT/answer.json')['status'] == 'ok' and Path('$ANSWER').is_file()"
 python3 "$REPO/bin/check_output.py" "$RUN" "$ANSWER" >"$OUT/check.txt"; code=$?

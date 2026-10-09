@@ -1,5 +1,5 @@
-# Personal data — never commit
-data/
+# Personal data — never commit (no trailing slash: data is often a symlink, which data/ misses)
+data
 cities/
 recommendations/
 taste-profile.md
