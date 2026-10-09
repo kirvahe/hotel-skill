@@ -203,11 +203,9 @@ setup_guard_in_settings() {
 
 # --uninstall-guard short-circuit (no skill files touched)
 if [ "${UNINSTALL_GUARD}" = true ]; then
-  if [ -f "${TARGET}/bin/settings_hook.py" ]; then
-    python3 "${TARGET}/bin/settings_hook.py" remove --settings "${SETTINGS_FILE}" | sed 's/^/==> Guard hook: /'
-  else
-    python3 "${SRC}/bin/settings_hook.py" remove --settings "${SETTINGS_FILE}" | sed 's/^/==> Guard hook: /'
-  fi
+  helper="${TARGET}/bin/settings_hook.py"
+  [ -f "${helper}" ] || helper="${SRC}/bin/settings_hook.py"
+  python3 "${helper}" remove --settings "${SETTINGS_FILE}" | sed 's/^/==> Guard hook: /'
   exit 0
 fi
 
@@ -284,13 +282,20 @@ copy_file() {
 
 # Hook commands get no ${CLAUDE_SKILL_DIR}, so SKILL.md names the guard hook as
 # __HOTEL_SKILL_DIR__/bin/guard_hook.py and the installed copy gets this install's absolute
-# path (KTD9). The repository's SKILL.md keeps the placeholder.
+# path (KTD9). The repository's SKILL.md keeps the placeholder. The path has its links resolved
+# (pwd -P, as bin/settings_hook.py resolves it), so the SKILL.md command is the same string as the
+# settings-file entry and Claude Code runs the guard once per call, not twice.
 wire_guard_hook() {
     local skill_md="${TARGET}/SKILL.md" abs escaped
     if [[ ! -f "${skill_md}" ]] || ! grep -q '__HOTEL_SKILL_DIR__' "${skill_md}"; then
         return 0
     fi
-    abs="$(cd "${TARGET}" && pwd)"
+    abs="$(cd "${TARGET}" && pwd -P)"
+    if [[ "${abs}" == *[\"\'\\]* ]]; then
+        # A link to a folder whose name holds a quote: keep the path checked in step 0, which the
+        # quoted hook command can hold. The settings entry then differs and the guard runs twice.
+        abs="$(cd "${TARGET}" && pwd)"
+    fi
     escaped="$(printf '%s' "${abs}" | sed -e 's/[\\&|]/\\&/g')"
     sed "s|__HOTEL_SKILL_DIR__|${escaped}|g" "${skill_md}" > "${skill_md}.tmp"
     mv "${skill_md}.tmp" "${skill_md}"

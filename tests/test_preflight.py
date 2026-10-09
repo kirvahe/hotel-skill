@@ -114,12 +114,37 @@ class GuardHookCheckTest(unittest.TestCase):
         result, out = run(self.skill, self.settings)
         self.assertEqual((result.returncode, out["status"]), (0, "ok"), out)
 
+    def test_skill_folder_with_a_space_in_its_path_passes(self):
+        spaced = self.skill.parent / "A&B skills" / "hotel"
+        (spaced / "bin").mkdir(parents=True)
+        (spaced / "bin" / "guard_hook.py").write_text("# guard\n", encoding="utf-8")
+        (spaced / "data").symlink_to(self.skill / "data")
+        self.skill, original = spaced, self.skill
+        self.skill_md(f"{spaced}/bin/guard_hook.py")
+        self.skill = original
+        subprocess.run([sys.executable, str(SCRIPT.parent / "settings_hook.py"), "add", "--skill-dir", str(spaced),
+                        "--settings", str(self.settings)], check=True, capture_output=True)
+        result, out = run(spaced, self.settings)
+        self.assertEqual((result.returncode, out["status"]), (0, "ok"), out)
+
     def test_guard_not_registered_in_settings_stops(self):
         (self.skill / "bin").mkdir()
         (self.skill / "bin" / "guard_hook.py").write_text("# guard\n", encoding="utf-8")
         self.skill_md(f"{self.skill}/bin/guard_hook.py")
         result, out = run(self.skill, self.settings)
         self.assertEqual((result.returncode, out["status"]), (1, "stop"))
+        self.assertIn("settings_hook.py add", out["message"])
+
+    def test_guard_registered_with_an_older_matcher_stops(self):
+        (self.skill / "bin").mkdir()
+        (self.skill / "bin" / "guard_hook.py").write_text("# guard\n", encoding="utf-8")
+        self.skill_md(f"{self.skill}/bin/guard_hook.py")
+        command = f'[ -f "{self.skill}/bin/guard_hook.py" ] || exit 0; exec python3 "{self.skill}/bin/guard_hook.py"  # hotel-skill-guard'
+        entry = {"matcher": "^(Bash|WebFetch|mcp__.+)$", "hooks": [{"type": "command", "command": command, "timeout": 10}]}
+        self.settings.write_text(json.dumps({"hooks": {"PreToolUse": [entry]}}), encoding="utf-8")
+        result, out = run(self.skill, self.settings)
+        self.assertEqual((result.returncode, out["status"]), (1, "stop"))
+        self.assertIn("current tool matcher", out["message"])
         self.assertIn("settings_hook.py add", out["message"])
 
     def test_guard_hook_not_set_up_by_the_installer_stops(self):

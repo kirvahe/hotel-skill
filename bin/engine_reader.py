@@ -70,6 +70,7 @@ from pathlib import Path
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from guard_hook import refused_host  # noqa: E402  (one Booking/Airbnb host rule for the reader and the guard, R21)
 from ledger import ENGINE_KINDS, validate_evidence  # noqa: E402
 
 EXIT_OK, EXIT_INVALID, EXIT_USAGE, EXIT_REFUSED, EXIT_SKIPPED = 0, 1, 2, 3, 4
@@ -82,7 +83,7 @@ NO_TEXT = "[no page text]"
 # The phrase table. Each pattern is a regular expression searched in one line of visible text
 # after folding: lowercase, accents removed ("disponibilità" -> "disponibilita"), curly
 # apostrophes made straight. Write patterns in that folded form. To add a language, add its
-# key to each group.
+# key to each group. classify folds each line once; quotes keep the line as the page shows it.
 PATTERNS = {
     # Page-level statements that no room is left for the dates. Room-level words such as
     # "sold out" or "agotada" stay out: they sit next to other rooms that are still for sale.
@@ -172,6 +173,8 @@ N_NIGHTS = re.compile(r"\b(\d{1,2})\s?" + NIGHTS_WORD)
 BARE_AMOUNT = re.compile(r"^\d{1,5}(?:[.,]\d{1,2})?$")
 # A currency glued to a night word ("eurnight", "€/night") says per night.
 CURRENCY_NIGHT = re.compile(r"(?:€|\beur)\s?/?\s?" + NIGHTS_WORD)
+# The currency of "eurnight", split from the night word so that the amount pattern ends at it.
+GLUED_CURRENCY = re.compile(r"(€|\beur)(?=" + NIGHTS_WORD + ")")
 # Pages that refuse automated browsers. Checked only when a page shows no price and no statement.
 BLOCKED = re.compile(r"\b403 error\b|access is temporarily restricted|\bcaptcha\b|request blocked|access denied")
 # Calendar legends: one or two symbols, then "=" and the meaning ("× = No availability").
@@ -236,14 +239,6 @@ def fold(text: str) -> str:
     return "".join(ch for ch in text if not unicodedata.combining(ch)).replace("\u2019", "'")
 
 
-def refused_host(url: str) -> str | None:
-    """The host when the URL is a Booking or Airbnb page (R21), else None."""
-    host = (urlsplit(url).hostname or "").rstrip(".")
-    if host == "booking.com" or host.endswith(".booking.com") or "airbnb" in host.split("."):
-        return host
-    return None
-
-
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -291,7 +286,7 @@ def _amounts(folded: str) -> list:
 
 def _line_price(folded: str, nights: int) -> tuple | None:
     """(per-night amount, "per_night") or (amount, "unknown") for one line, or None when it does not count."""
-    folded = re.sub(r"(€|\beur)(?=" + NIGHTS_WORD + ")", r"\1 ", folded)
+    folded = GLUED_CURRENCY.sub(r"\1 ", folded)
     amounts = _amounts(folded)
     if not amounts:
         return None
@@ -312,37 +307,42 @@ def _line_price(folded: str, nights: int) -> tuple | None:
     return lowest, "unknown"
 
 
-def _joined_amounts(lines: list) -> list:
-    """The lines, with a bare amount joined to a next line that starts with its currency."""
+def _folded(lines: list, folded: list | None) -> list:
+    return [fold(line) for line in lines] if folded is None else folded
+
+
+def _joined_amounts(lines: list, folded: list) -> list:
+    """(line, folded line) pairs, with a bare amount joined to a next line that starts with its currency."""
     out, i = [], 0
     while i < len(lines):
-        following = fold(lines[i + 1]).lstrip() if i + 1 < len(lines) else ""
-        if BARE_AMOUNT.match(lines[i].strip()) and following.startswith(("€", "eur")):
-            out.append(f"{lines[i].strip()} {lines[i + 1].strip()}")
+        if (BARE_AMOUNT.match(lines[i].strip()) and i + 1 < len(lines)
+                and folded[i + 1].lstrip().startswith(("€", "eur"))):
+            line = f"{lines[i].strip()} {lines[i + 1].strip()}"
+            out.append((line, fold(line)))
             i += 2
         else:
-            out.append(lines[i])
+            out.append((lines[i], folded[i]))
             i += 1
     return out
 
 
-def room_price(lines: list, trip: Trip) -> tuple | None:
+def room_price(lines: list, trip: Trip, folded: list | None = None) -> tuple | None:
     """(amount, line, price_basis): the lowest per-night price, else the lowest amount of unknown basis.
 
     Lowest, because understating a price keeps a hotel in the budget for the user to check,
     while overstating it would push the hotel out to the beyond-budget group (R25).
+    folded: the lines already folded, one for one, when the caller has them.
     """
     nights = (trip.check_out - trip.check_in).days
     best = {"per_night": None, "unknown": None}
     after_other_site = False
-    for line in _joined_amounts(lines):
-        folded = fold(line)
-        label_only = bool(OTHER_SITES.search(folded)) and not _amounts(folded)
-        skip = after_other_site or OTHER_SITES.search(folded) or any(p.search(folded) for p in NOT_A_ROOM_PRICE)
+    for line, text in _joined_amounts(lines, _folded(lines, folded)):
+        label_only = bool(OTHER_SITES.search(text)) and not _amounts(text)
+        skip = after_other_site or OTHER_SITES.search(text) or any(p.search(text) for p in NOT_A_ROOM_PRICE)
         after_other_site = label_only
         if skip:
             continue
-        found = _line_price(folded, nights)
+        found = _line_price(text, nights)
         if found and (best[found[1]] is None or found[0] < best[found[1]][0]):
             best[found[1]] = (found[0], line)
     for basis in ("per_night", "unknown"):
@@ -367,8 +367,8 @@ def _dated(day: int, month: int, year: int | None, trip: Trip) -> date | None:
     return min(options, key=lambda d: abs((d - trip.check_in).days)) if options else None
 
 
-def _dates_in(line: str, trip: Trip) -> list:
-    folded = fold(line)
+def _dates_in(folded: str, trip: Trip) -> list:
+    """The dates on one folded line, in the order they appear."""
     found, spans = [], []
     for match in ISO_DATE.finditer(folded):
         found.append((match.start(), _date(int(match[1]), int(match[2]), int(match[3]))))
@@ -400,24 +400,25 @@ def _dates_in(line: str, trip: Trip) -> list:
     return [day for _, day in sorted(found, key=lambda item: item[0]) if day]
 
 
-def _date_texts(lines: list) -> list:
-    """(text, quote) to search for dates: every line, and a day, month and year on three lines of their own."""
-    texts = [(line, line) for line in lines]
+def _date_texts(lines: list, folded: list) -> list:
+    """(folded text, quote) to search for dates: every line, and a day, month and year on three lines of their own."""
+    texts = list(zip(folded, lines))
     for i in range(len(lines) - 2):
-        day, month, year = (fold(line).strip().rstrip(".") for line in lines[i:i + 3])
+        day, month, year = (text.strip().rstrip(".") for text in folded[i:i + 3])
         if re.fullmatch(r"\d{1,2}", day) and month in MONTH_NUMBER and re.fullmatch(r"\d{4}", year):
             texts.append((f"{day} {month} {year}", " / ".join(line.strip() for line in lines[i:i + 3])))
     return texts
 
 
-def dates_shown(lines: list, trip: Trip) -> dict | None:
+def dates_shown(lines: list, trip: Trip, folded: list | None = None) -> dict | None:
     """The check-in and check-out dates the page shows, with the lines they came from.
 
     When both trip dates appear, those are the dates shown. Otherwise the first two different
     dates on the page are, earlier first. None when the page shows fewer than two dates.
+    folded: the lines already folded, one for one, when the caller has them.
     """
     first_line = {}
-    for text, quote in _date_texts(lines):
+    for text, quote in _date_texts(lines, _folded(lines, folded)):
         for day in _dates_in(text, trip):
             first_line.setdefault(day, quote)
     if trip.check_in in first_line and trip.check_out in first_line:
@@ -432,13 +433,14 @@ def dates_shown(lines: list, trip: Trip) -> dict | None:
 
 def classify(candidate: str, page: Page, trip: Trip) -> dict:
     """One evidence record for one page. A page that cannot settle the question is unreadable (R12)."""
-    price = room_price(page.lines, trip)
-    no_rooms = next((line for line in page.lines
-                     if not LEGEND.match(line) and any(p.search(fold(line)) for p in NO_ROOMS)), None)
+    folded = [fold(line) for line in page.lines]  # once per line; every quote is the line as shown
+    price = room_price(page.lines, trip, folded)
+    no_rooms = next((line for line, text in zip(page.lines, folded)
+                     if not LEGEND.match(line) and any(p.search(text) for p in NO_ROOMS)), None)
     if price and no_rooms:
         return unreadable(candidate, page.url, f"{price[1]} / {no_rooms}",
                           "the page shows both a price and a no-availability statement")
-    shown = dates_shown(page.lines, trip)
+    shown = dates_shown(page.lines, trip, folded)
     if price and shown:
         return evidence(candidate, "engine_price", page.url, price[1], price_eur=price[0], price_basis=price[2],
                         dates_shown=shown)
@@ -447,7 +449,7 @@ def classify(candidate: str, page: Page, trip: Trip) -> dict:
     if price or no_rooms:
         return unreadable(candidate, page.url, price[1] if price else no_rooms,
                           "the page shows a price or a no-availability statement but no check-in and check-out dates")
-    blocked = next((line for line in page.lines if BLOCKED.search(fold(line))), None)
+    blocked = next((line for line, text in zip(page.lines, folded) if BLOCKED.search(text)), None)
     if blocked:
         return unreadable(candidate, page.url, blocked, "blocked: the site refuses automated browsers")
     return unreadable(candidate, page.url, page.lines[0] if page.lines else NO_TEXT,
@@ -461,7 +463,8 @@ def booking_link(page: Page) -> tuple:
     for href, text in page.links:
         if urlsplit(href).scheme not in ("http", "https") or href.split("#")[0] == here:
             continue
-        if not any(p.search(fold(text)) for p in BOOKING_LINK):
+        folded = fold(text)
+        if not any(p.search(folded) for p in BOOKING_LINK):
             continue
         if refused_host(href):
             refused.append((href, text))
@@ -795,9 +798,7 @@ def read_in_browser(candidate: str, url: str, trip: Trip, limits: dict) -> tuple
 # ---------------------------------------------------------------- command line
 
 def fill_url(url: str, trip: Trip) -> str:
-    if "{" not in url:
-        return url
-    return url.format(check_in=trip.check_in, check_out=trip.check_out, guests=trip.guests)
+    return _fill(url, trip) if "{" in url else url
 
 
 def _iso_date(text: str) -> date:

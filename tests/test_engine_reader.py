@@ -14,6 +14,7 @@ import time
 import unittest
 from datetime import date
 from pathlib import Path
+from unittest import mock
 
 BIN = Path(__file__).resolve().parent.parent / "bin"
 FIXTURES = Path(__file__).resolve().parent / "fixtures" / "engines"
@@ -424,6 +425,20 @@ class PatternTableTest(unittest.TestCase):
                 record = self.classify(*lines)
                 self.assertEqual(record["kind"], "engine_unreadable")
                 self.assertTrue(record["reason"].startswith("blocked"), record["reason"])
+
+    def test_each_line_is_folded_once(self):
+        lines = [self.DATES, "Habitación doble 160,00 €", "184", "EURnight", "Lorem ipsum"] * 20
+        folded = []
+
+        def counting_fold(text, fold=reader.fold):
+            folded.append(text)
+            return fold(text)
+
+        with mock.patch.object(reader, "fold", counting_fold):
+            record = self.classify(*lines)
+        self.assertEqual(record["kind"], "engine_price")
+        self.assertEqual(record["quote"], "184 EURnight")
+        self.assertLessEqual(len(folded), len(lines) + 20)  # each line, and each "184 EURnight" joined once
 
     def test_price_without_dates_is_unknown(self):
         record = self.classify("Doble 140 €")

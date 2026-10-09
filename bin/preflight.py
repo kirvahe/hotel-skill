@@ -16,7 +16,8 @@ DIR/SKILL.md does not name an installed guard hook (bin/guard_hook.py, R21):
 the hook command lets every call through when its file is gone, so this is
 where a moved or hand-copied skill is caught. It also stops when the Claude Code
 settings file (FILE, default ~/.claude/settings.json) does not register the guard
-for this skill folder: only a settings-file hook covers the search subagents.
+for this skill folder with the guard's current matcher: only a settings-file hook
+covers the search subagents.
 """
 from __future__ import annotations
 
@@ -31,7 +32,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import settings_hook  # noqa: E402
 
 PLACEHOLDER_PREFIXES = ("<!--", "_TBD", "{")
-GUARD_PATH = re.compile(r"""([^\s"']*/bin/guard_hook\.py)""")
+# The hook command quotes the script path ("…/bin/guard_hook.py"), which may hold spaces.
+GUARD_PATH = re.compile(r'"([^"]*/bin/guard_hook\.py)"')
 
 
 def top3_hotels(profile: str) -> int | None:
@@ -74,7 +76,8 @@ def guard_problem(skill_dir: Path, settings: Path = settings_hook.DEFAULT_SETTIN
         return f"The guard hook file is missing: {missing[0]} (was the skill folder moved?). {reinstall}"
     registered = settings_hook.status(settings, skill_dir.resolve())
     if registered != "ok":
-        where = "for another skill folder" if registered == "other_skill_dir" else "yet"
+        where = {"other_skill_dir": "for another skill folder",
+                 "old_matcher": "with the current tool matcher"}.get(registered, "yet")
         return (f"The guard hook is not registered in {settings} {where}. Without it the search agents are not "
                 f"kept off Booking and Airbnb. Register it with: python3 {skill_dir.resolve()}/bin/settings_hook.py "
                 f"add --skill-dir {skill_dir.resolve()}  (or re-install with ./install.sh --guard-in-settings)")
@@ -84,7 +87,7 @@ def guard_problem(skill_dir: Path, settings: Path = settings_hook.DEFAULT_SETTIN
 def check(skill_dir: Path, settings: Path = settings_hook.DEFAULT_SETTINGS) -> dict:
     data = skill_dir / "data"
     result = {"status": "stop", "message": "", "data_root": "", "warnings": []}
-    reinstall = "Re-install with: ./install.sh --data-dir /path/to/your/hotel-data"
+    reinstall = "re-install with: ./install.sh --data-dir /path/to/your/hotel-data"
 
     problem = guard_problem(skill_dir, settings)
     if problem:
@@ -92,17 +95,17 @@ def check(skill_dir: Path, settings: Path = settings_hook.DEFAULT_SETTINGS) -> d
         return result
 
     if os.path.islink(data) and not data.exists():
-        result["message"] = f"data/ links to a missing folder: {os.readlink(data)}. Restore that folder, or {reinstall[0].lower() + reinstall[1:]}"
+        result["message"] = f"data/ links to a missing folder: {os.readlink(data)}. Restore that folder, or {reinstall}"
         return result
     if not data.is_dir():
-        result["message"] = f"No data folder at {data}. {reinstall}"
+        result["message"] = f"No data folder at {data}. {reinstall.capitalize()}"
         return result
 
     root = data.resolve()
     result["data_root"] = str(root)
     profile_path = root / "taste-profile.md"
     if not profile_path.is_file():
-        result["message"] = f"No taste-profile.md in {root}. Fill in the profile first, or {reinstall[0].lower() + reinstall[1:]}"
+        result["message"] = f"No taste-profile.md in {root}. Fill in the profile first, or {reinstall}"
         return result
 
     rows = top3_hotels(profile_path.read_text(encoding="utf-8"))

@@ -3,6 +3,7 @@
 Every settings file here is a temporary one; the user's own settings are never read.
 """
 import json
+import re
 import subprocess
 import sys
 import tempfile
@@ -12,7 +13,10 @@ from pathlib import Path
 BIN = Path(__file__).resolve().parent.parent / "bin"
 sys.path.insert(0, str(BIN))
 
+import guard_hook  # noqa: E402
 import settings_hook  # noqa: E402
+
+OLD_MATCHER = "^(Bash|WebFetch|mcp__.+)$"  # before 1.2: started the guard before every MCP tool
 
 OTHER = {
     "model": "opus",
@@ -100,12 +104,35 @@ class SettingsHookTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(self.settings.read_text(encoding="utf-8"), "{ not json")
         self.assertIn("not valid JSON", result.stderr)
+        self.assertEqual(settings_hook.status(self.settings, self.skill), "missing")
+        with self.assertRaises(settings_hook.SettingsFileError):
+            settings_hook.remove(self.settings)
 
     def test_status(self):
         self.assertEqual(settings_hook.status(self.settings, self.skill), "missing")
         self.cli("add", "--skill-dir", str(self.skill))
         self.assertEqual(settings_hook.status(self.settings, self.skill), "ok")
         self.assertEqual(settings_hook.status(self.settings, self.root / "other" / "hotel"), "other_skill_dir")
+
+    def test_an_entry_with_an_older_matcher_is_reported_and_add_updates_it(self):
+        self.settings.parent.mkdir(parents=True)
+        old = {"matcher": OLD_MATCHER, "hooks": [{"type": "command", "command": settings_hook.command(self.skill),
+                                                   "timeout": 10}]}
+        self.settings.write_text(json.dumps({"hooks": {"PreToolUse": [old]}}), encoding="utf-8")
+        self.assertEqual(settings_hook.status(self.settings, self.skill), "old_matcher")
+        result = self.cli("add", "--skill-dir", str(self.skill))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(settings_hook.status(self.settings, self.skill), "ok")
+        groups = json.loads(self.settings.read_text(encoding="utf-8"))["hooks"]["PreToolUse"]
+        self.assertEqual([group["matcher"] for group in groups], [guard_hook.MATCHER])
+        self.assertEqual(len(self.backups()), 1)
+
+    def test_the_skill_md_hook_is_the_settings_entry(self):
+        # One command string in both places: Claude Code then runs the guard once per call, not twice.
+        skill_md = (BIN.parent / "SKILL.md").read_text(encoding="utf-8")
+        self.assertEqual(re.findall(r"^\s*command: '(.*)'$", skill_md, re.M),
+                         [settings_hook.command(Path("__HOTEL_SKILL_DIR__"))])
+        self.assertEqual(re.findall(r'^\s*- matcher: "(.*)"$', skill_md, re.M), [settings_hook.matcher()])
 
     def test_the_command_lets_calls_through_when_the_hook_file_is_gone(self):
         command = settings_hook.command(self.root / "gone" / "hotel")

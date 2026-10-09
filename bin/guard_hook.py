@@ -2,9 +2,11 @@
 """PreToolUse guard for the /hotel skill: no Booking or Airbnb automation (R21, KTD9).
 
 The skill's frontmatter registers this hook, and the installer writes this script's absolute
-path into the hook command. Claude Code then runs it before every matched tool call for the
-rest of the session, with the hook JSON on stdin: tool_name, tool_input, cwd, session_id, and
-agent_id / agent_type when the call comes from a subagent.
+path into the hook command; bin/settings_hook.py registers the same command in the Claude Code
+settings file, the only place whose hooks also run for subagents. Claude Code then runs it before
+every tool call that MATCHER (below) matches, with the hook JSON on stdin: tool_name, tool_input,
+cwd, session_id, and agent_id / agent_type when the call comes from a subagent. MATCHER is built
+from the server lists below: it covers the tools decide() acts on and leaves other MCP servers out.
 
 Always blocked:
   - browser and screen tools whose input names a Booking or Airbnb host, in a URL or in any
@@ -27,13 +29,15 @@ ledger.read_state reads it); a state file that cannot be parsed, or a trip.json 
 readable check-in, counts as open. There is no age limit: an unfinished run stays open until its
 check-in date or until the skill closes it, because the skill resumes open runs.
 
-Host rule: booking.com and its subdomains, and any host with an "airbnb" label, the same rule
-as engine_reader.refused_host (tests/test_guard_hook.py checks that they agree).
+Host rule: booking.com and its subdomains, and any host with an "airbnb" label (refused_host,
+which bin/engine_reader.py imports from here).
 
 Output: a block prints the deny JSON on stdout and the same reason on stderr, and exits 2
 (exit 2 blocks even if the JSON format changes). A pass prints nothing and exits 0. Malformed
 input passes silently; an error inside a check passes with one line on stderr, so a bug never
-breaks every tool call. No network, no imports beyond the standard library.
+breaks every tool call. No network, no imports beyond the standard library. The hook runs before
+every matched tool call, so importing it stays cheap and does nothing else: modules only one check
+needs (datetime) are imported inside that check.
 
 Usage (as Claude Code runs it):
     python3 /abs/skill/bin/guard_hook.py < hook-input.json
@@ -42,16 +46,19 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import date
 import re
 import sys
-from pathlib import Path
 from urllib.parse import unquote, urlsplit
-
-SKILL_DIR = Path(__file__).resolve().parent.parent
 
 BROWSER_SERVERS = ("playwright", "claude-in-chrome", "computer-use", "cmux-cua", "Claude_Browser", "remote-devices")
 FETCH_SERVERS = ("firecrawl", "fetch", "exa", "claude_ai_Exa")
+# The hook's matcher (SKILL.md and the settings file) covers every tool decide() acts on: Bash, WebFetch,
+# the tools of a browser or fetch server, directly or bundled by a plugin (mcp__plugin_<plugin>_<server>,
+# see _on), and the tools of any server with "gmail" in its name, in any case. Other MCP servers never
+# start the hook. Claude Code reads it as a JavaScript regex; server names hold only letters, digits, "_"
+# and "-", so they need no escaping.
+MATCHER = ("^(Bash|WebFetch|mcp__(plugin_(.*_)?)?(" + "|".join(BROWSER_SERVERS + FETCH_SERVERS) + ")(__.*)?"
+           "|mcp__.*[Gg][Mm][Aa][Ii][Ll].*)$")
 GMAIL_READS = frozenset({"search_threads", "get_thread", "get_message", "list_labels", "list_drafts", "get_draft",
                          "mailbox_info", "list_filters", "list_events", "get_event", "list_calendars"})
 # Fields that hold code a browser runs (page scripts, Firecrawl interact code).
@@ -112,8 +119,15 @@ def _forms(text: str) -> list:
 
 
 def refused_in_text(text: str) -> str | None:
-    """The first Booking or Airbnb host named anywhere in free text."""
+    """The first Booking or Airbnb host named anywhere in free text.
+
+    Every refused host holds "booking" or "airbnb", so text without either skips the host scan,
+    which is slow on long dotted strings.
+    """
     for form in _forms(text):
+        lowered = form.lower()
+        if "booking" not in lowered and "airbnb" not in lowered:
+            continue
         for host in HOST_IN_TEXT.findall(form):
             if _refused(host.lower()):
                 return host.lower()
@@ -178,30 +192,40 @@ def _on(server: str, names) -> bool:
     return server in names or (server.startswith("plugin_") and server.endswith(tuple("_" + n for n in names)))
 
 
-def open_run(skill_dir: Path = SKILL_DIR) -> str | None:
-    """'trips/<trip>/run (stage X)' for the first run whose stage is not done, else None."""
-    trips = skill_dir / "data" / "trips"
-    if not trips.is_dir():
+def open_run(skill_dir: str | None = None) -> str | None:
+    """'trips/<trip>/run (stage X)' for the first run whose stage is not done, else None.
+
+    skill_dir defaults to the folder that holds this bin/ directory.
+    """
+    skill_dir = skill_dir or os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+    trips = os.path.join(skill_dir, "data", "trips")
+    if not os.path.isdir(trips):
         return None
     for entry in sorted(os.scandir(trips), key=lambda e: e.name):
-        run = Path(entry.path) / "run"
-        if run.is_dir():
-            stage = _stage(run / "state.json")
-            if stage != "done" and not _check_in_passed(run / "trip.json"):
+        run = os.path.join(entry.path, "run")
+        if os.path.isdir(run):
+            stage = _stage(os.path.join(run, "state.json"))
+            if stage != "done" and not _check_in_passed(os.path.join(run, "trip.json")):
                 return f"trips/{entry.name}/run, stage {stage}"
     return None
 
 
-def _check_in_passed(path: Path) -> bool:
+def _read_json(path: str):
+    with open(path, encoding="utf-8") as handle:
+        return json.load(handle)
+
+
+def _check_in_passed(path: str) -> bool:
+    from datetime import date  # only open runs need it; the hook's import stays cheap
     try:
-        return date.fromisoformat(json.loads(path.read_text(encoding="utf-8"))["check_in"]) < date.today()
+        return date.fromisoformat(_read_json(path)["check_in"]) < date.today()
     except (OSError, ValueError, KeyError, TypeError, AttributeError):
         return False
 
 
-def _stage(path: Path) -> str:
+def _stage(path: str) -> str:
     try:
-        stage = json.loads(path.read_text(encoding="utf-8")).get("stage")
+        stage = _read_json(path).get("stage")
     except FileNotFoundError:
         return "intake"
     except (OSError, ValueError, AttributeError):

@@ -6,12 +6,15 @@ a subprocess with the hook JSON on stdin, the way Claude Code runs it. Nothing r
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 BIN = Path(__file__).resolve().parent.parent / "bin"
 sys.path.insert(0, str(BIN))
@@ -79,14 +82,94 @@ class GuardTest(unittest.TestCase):
 
 
 class HostRuleTest(unittest.TestCase):
-    def test_host_rule_is_the_engine_readers(self):
-        urls = [BOOKING_PAGE, AIRBNB_PAGE, HOTEL_SITE, "https://booking.com/", "https://secure.booking.com/x",
-                "https://www.airbnb.com/rooms/1", "https://es.airbnb.co.uk/s/x", "https://AIRBNB.IT/",
-                "https://notbooking.com/", "https://booking.com.hotel-inventado.example/",
-                "https://airbnb-fans.example/", "https://www.booking.com./x", "mailto:x@hotel-inventado.example"]
-        for url in urls:
+    def test_the_engine_reader_uses_the_guards_host_rule(self):
+        self.assertIs(reader.refused_host, guard.refused_host)
+
+    def test_host_rule(self):
+        refused = [BOOKING_PAGE, AIRBNB_PAGE, "https://booking.com/", "https://secure.booking.com/x",
+                   "https://www.airbnb.com/rooms/1", "https://es.airbnb.co.uk/s/x", "https://AIRBNB.IT/",
+                   "https://www.booking.com./x"]
+        allowed = [HOTEL_SITE, "https://notbooking.com/", "https://booking.com.hotel-inventado.example/",
+                   "https://airbnb-fans.example/", "mailto:x@hotel-inventado.example"]
+        for url in refused:
             with self.subTest(url=url):
-                self.assertEqual(guard.refused_host(url), reader.refused_host(url))
+                self.assertTrue(guard.refused_host(url))
+        for url in allowed:
+            with self.subTest(url=url):
+                self.assertIsNone(guard.refused_host(url))
+
+
+def _full_scan(text):
+    """refused_in_text without its quick check: the host scan on every form of the text."""
+    for form in guard._forms(text):
+        for host in guard.HOST_IN_TEXT.findall(form):
+            if guard._refused(host.lower()):
+                return host.lower()
+    return None
+
+
+class HostInTextTest(unittest.TestCase):
+    def test_quick_check_gives_the_full_scans_answer(self):
+        texts = ["curl -sL 'https://www.booking.com/x'", "site:booking.com hotel", "AIRBNB.es/rooms/1",
+                 "see www.boo\u212aing.com", "https%3A%2F%2Fwww.airbnb.com%2Frooms", "%2562ooking.com",
+                 "notbooking.com", "airbnb-fans.example", "booking.com.hotel-inventado.example", "git status",
+                 "grep -rn 'Booking' /tmp/run/", "hotel-inventado.example/reservas", "", "a." * 50 + "booking.com"]
+        for text in texts:
+            with self.subTest(text=text):
+                self.assertEqual(guard.refused_in_text(text), _full_scan(text))
+
+    def test_long_dotted_text_without_booking_or_airbnb_is_quick(self):
+        text = "a." * 5000 + "-"  # 10 KB that sends the host scan into quadratic backtracking
+        start = time.monotonic()
+        self.assertIsNone(guard.refused_in_text(text))
+        self.assertIsNone(guard.decide({"tool_name": "Bash", "tool_input": {"command": f"curl {text}"}}))
+        self.assertLess(time.monotonic() - start, 0.2)
+
+    def test_importing_the_guard_loads_no_pathlib_or_datetime(self):
+        code = ("import sys; before = set(sys.modules); sys.path.insert(0, sys.argv[1]); import guard_hook; "
+                "print(sorted({'pathlib', 'datetime'} & (set(sys.modules) - before)))")
+        result = subprocess.run([sys.executable, "-c", code, str(BIN)], capture_output=True, text=True)
+        self.assertEqual((result.returncode, result.stdout.strip()), (0, "[]"), result.stderr)
+
+
+class MatcherTest(unittest.TestCase):
+    """MATCHER starts the hook for every tool decide() acts on, and for no other MCP server."""
+    OPEN_RUN = "trips/ciudad-inventada-2026-11/run, stage shortlist"
+    TRIGGER = {"url": BOOKING_PAGE, "command": f"curl '{BOOKING_PAGE}'"}
+
+    def acts(self, tool):
+        """decide() blocks this tool on input that every check refuses (a Gmail write with a run open)."""
+        with mock.patch.object(guard, "open_run", return_value=self.OPEN_RUN):
+            return guard.decide({"tool_name": tool, "tool_input": self.TRIGGER}) is not None
+
+    def matches(self, tool):
+        return re.search(guard.MATCHER, tool) is not None
+
+    def test_server_names_need_no_escaping(self):
+        for server in guard.BROWSER_SERVERS + guard.FETCH_SERVERS:
+            self.assertRegex(server, r"^[A-Za-z0-9_-]+$")
+
+    def test_every_tool_decide_acts_on_matches_directly_and_through_a_plugin(self):
+        tools = ["Bash", "WebFetch"]
+        for server in guard.BROWSER_SERVERS + guard.FETCH_SERVERS:
+            tools += [f"mcp__{server}__browser_navigate", f"mcp__plugin_{server}_{server}__x",
+                      f"mcp__plugin_some_plugin_{server}__x", f"mcp__plugin_{server}__x", f"mcp__{server}"]
+        tools += [server + "send_message" for server in GMAIL_SERVERS]
+        tools += ["mcp__GMAIL__x", "mcp__my-GMail-box__x", "mcp__plugin_mail_Gmail_work__reply"]
+        for tool in tools:
+            with self.subTest(tool=tool):
+                self.assertTrue(self.acts(tool))
+                self.assertTrue(self.matches(tool))
+
+    def test_other_tools_do_not_match(self):
+        tools = ["WebSearch", "Read", "Write", "Edit", "Agent", "mcp__claude_ai_Notion__notion-search",
+                 "mcp__github__search_code", "mcp__claude_ai_Google_Drive__read_file_content",
+                 "mcp__plugin_xfetch__x", "mcp__playwrightish__browser_navigate", "mcp__myexa__web_search_exa",
+                 "mcp__icloud-calendar__create_event", "mcp__mail__send_message", "xmcp__playwright__x", "bash"]
+        for tool in tools:
+            with self.subTest(tool=tool):
+                self.assertFalse(self.acts(tool))
+                self.assertFalse(self.matches(tool))
 
 
 class BrowserTest(GuardTest):

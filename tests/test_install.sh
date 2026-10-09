@@ -111,7 +111,7 @@ printf '\nGuard: __HOTEL_SKILL_DIR__/bin/guard_hook.py\n' >> "$src/SKILL.md"
 skill="$root/A&B skills/hotel"
 if (cd "$root" && HOME="$root/home" "$src/install.sh" --non-interactive --skill-dir "A&B skills/hotel" \
       --data-dir "$root/mydata" >"$root/out.log" 2>&1); then
-  abs="$(cd "$skill" && pwd)"
+  abs="$(cd "$skill" && pwd -P)"
   hook="$(sed -n 's/^Guard: //p' "$skill/SKILL.md")"
   booking='{"hook_event_name":"PreToolUse","tool_name":"WebFetch","tool_input":{"url":"https://www.booking.com/x"}}'
   printf '%s' "$booking" | python3 "$hook" >/dev/null 2>&1; status=$?
@@ -192,6 +192,65 @@ if run_install "$root" --skill-dir "$root/skills/hotel" --data-dir "$root/mydata
   pass "non-interactive install without --guard-in-settings leaves settings alone"
 else
   fail "non-interactive install without --guard-in-settings leaves settings alone"
+fi
+
+# 14. The installed SKILL.md hook is the settings-file entry, string for string (matcher and command),
+#     so Claude Code runs the guard once per call while /hotel is active. The skill folder is reached
+#     through a link, which both sides resolve.
+root="$(new_root)"; fixture_data "$root/mydata"
+mkdir -p "$root/real"; ln -s "$root/real" "$root/link"
+skill="$root/link/hotel"
+if run_install "$root" --skill-dir "$skill" --data-dir "$root/mydata" --guard-in-settings; then
+  skill_cmd="$(sed -n "s/^ *command: '\\(.*\\)'$/\\1/p" "$skill/SKILL.md")"
+  skill_matcher="$(sed -n 's/^ *- matcher: "\(.*\)"$/\1/p' "$skill/SKILL.md")"
+  expected="$(python3 -c 'import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); import settings_hook
+print(settings_hook.command(Path(sys.argv[2]).resolve()))' "$skill/bin" "$skill")"
+  entry="$(python3 -c 'import json, sys
+[group] = json.load(open(sys.argv[1]))["hooks"]["PreToolUse"]
+print(group["hooks"][0]["command"]); print(group["matcher"])' "$root/home/.claude/settings.json")"
+  if [[ -n "$skill_cmd" && "$skill_cmd" == "$expected" && "$entry" == "$skill_cmd"$'\n'"$skill_matcher" ]]; then
+    pass "installed SKILL.md hook is the settings-file entry"
+  else
+    fail "installed SKILL.md hook is the settings-file entry (SKILL.md '$skill_cmd', expected '$expected', settings '$entry')"
+  fi
+else
+  fail "SKILL.md hook vs settings entry (installer exited non-zero)"
+fi
+
+# 15. A settings entry with the matcher of an older version is updated by a non-interactive
+#     re-install (the auto-update path).
+root="$(new_root)"; fixture_data "$root/mydata"
+skill="$root/skills/hotel"
+run_install "$root" --skill-dir "$skill" --data-dir "$root/mydata" --guard-in-settings
+python3 -c 'import json, sys
+path = sys.argv[1]; data = json.load(open(path))
+data["hooks"]["PreToolUse"][0]["matcher"] = "^(Bash|WebFetch|mcp__.+)$"
+json.dump(data, open(path, "w"))' "$root/home/.claude/settings.json"
+before="$(HOME="$root/home" python3 "$skill/bin/settings_hook.py" status --skill-dir "$skill")"
+run_install "$root" --skill-dir "$skill" --data-dir "$root/mydata"
+after="$(HOME="$root/home" python3 "$skill/bin/settings_hook.py" status --skill-dir "$skill")"
+if [[ "$before" == "old_matcher" && "$after" == "ok" ]]; then
+  pass "re-install updates a guard entry with an older matcher"
+else
+  fail "re-install updates a guard entry with an older matcher (before '$before', after '$after')"
+fi
+
+# 16. A skill folder reached through a link to a folder whose name holds an apostrophe keeps the
+#     link's path in SKILL.md (the hook command is a single-quoted YAML string), and the hook blocks.
+root="$(new_root)"; fixture_data "$root/mydata"
+mkdir -p "$root/it's"; ln -s "$root/it's" "$root/plain"
+skill="$root/plain/hotel"
+if run_install "$root" --skill-dir "$skill" --data-dir "$root/mydata"; then
+  cmd="$(sed -n "s/^ *command: '\\(.*\\)'$/\\1/p" "$skill/SKILL.md")"
+  booking='{"hook_event_name":"PreToolUse","tool_name":"WebFetch","tool_input":{"url":"https://www.booking.com/x"}}'
+  printf '%s' "$booking" | sh -c "$cmd" >/dev/null 2>&1; blocked=$?
+  if [[ "$cmd" == *"$skill/bin/guard_hook.py"* && "$cmd" != *"it's"* && "$blocked" -eq 2 ]]; then
+    pass "a link to a folder with an apostrophe keeps a plain hook path"
+  else
+    fail "a link to a folder with an apostrophe (cmd='$cmd', blocked exit $blocked)"
+  fi
+else
+  fail "a link to a folder with an apostrophe (installer exited non-zero)"
 fi
 
 # 8. A skill folder path with a double quote is refused before anything is written

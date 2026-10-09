@@ -5,10 +5,10 @@ argument-hint: [city budget/occasion]
 version: "1.2"
 hooks:
   PreToolUse:
-    - matcher: "^(Bash|WebFetch|mcp__.+)$"
+    - matcher: "^(Bash|WebFetch|mcp__(plugin_(.*_)?)?(playwright|claude-in-chrome|computer-use|cmux-cua|Claude_Browser|remote-devices|firecrawl|fetch|exa|claude_ai_Exa)(__.*)?|mcp__.*[Gg][Mm][Aa][Ii][Ll].*)$"
       hooks:
         - type: command
-          command: '[ -f "__HOTEL_SKILL_DIR__/bin/guard_hook.py" ] || exit 0; exec python3 "__HOTEL_SKILL_DIR__/bin/guard_hook.py"'
+          command: '[ -f "__HOTEL_SKILL_DIR__/bin/guard_hook.py" ] || exit 0; exec python3 "__HOTEL_SKILL_DIR__/bin/guard_hook.py"  # hotel-skill-guard'
           timeout: 10
 ---
 

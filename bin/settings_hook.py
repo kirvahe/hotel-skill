@@ -11,10 +11,14 @@ Usage:
     python3 settings_hook.py status --skill-dir DIR [--settings FILE]
 
 FILE defaults to ~/.claude/settings.json. The guard's entry is the PreToolUse hook whose
-command carries the marker below; add replaces it (a reinstall into another folder) and
-keeps every other setting and hook. Before changing an existing file, add and remove copy it
-to FILE.bak-hotel-<time>. A file that is not valid JSON is left untouched (exit 1).
-status prints ok, missing or other_skill_dir.
+command carries the marker below, with the guard's own matcher (bin/guard_hook.py MATCHER); add
+replaces it (a reinstall into another folder, or an older matcher) and keeps every other
+setting and hook. The command is the one install.sh writes into the installed SKILL.md, so
+Claude Code runs the guard once per call, not twice, while /hotel is active. Before changing an
+existing file, add and remove copy it to FILE.bak-hotel-<time>. A file that is not valid JSON is
+left untouched (exit 1).
+status prints ok, missing, other_skill_dir or old_matcher (registered for this folder with an
+older matcher; add updates it).
 """
 from __future__ import annotations
 
@@ -26,8 +30,20 @@ import time
 from pathlib import Path
 
 MARKER = "hotel-skill-guard"
-MATCHER = "^(Bash|WebFetch|mcp__.+)$"
 DEFAULT_SETTINGS = Path.home() / ".claude" / "settings.json"
+
+
+class SettingsFileError(Exception):
+    """The settings file is not a JSON object; it is left untouched."""
+
+
+def matcher() -> str:
+    """The guard's matcher, from guard_hook itself (one list of the tools it acts on).
+
+    Imported here, not at the top, so remove works and preflight can report a missing hook file.
+    """
+    from guard_hook import MATCHER
+    return MATCHER
 
 
 def command(skill_dir: Path) -> str:
@@ -42,9 +58,9 @@ def _load(path: Path) -> dict:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except ValueError:
-        raise SystemExit(f"{path} is not valid JSON; it was left untouched.")
+        raise SettingsFileError(f"{path} is not valid JSON; it was left untouched.") from None
     if not isinstance(data, dict):
-        raise SystemExit(f"{path} does not hold a JSON object; it was left untouched.")
+        raise SettingsFileError(f"{path} does not hold a JSON object; it was left untouched.")
     return data
 
 
@@ -69,7 +85,7 @@ def _write(path: Path, data: dict) -> None:
 def add(path: Path, skill_dir: Path) -> str:
     data = _load(path)
     hooks = data.setdefault("hooks", {})
-    entry = {"matcher": MATCHER, "hooks": [{"type": "command", "command": command(skill_dir), "timeout": 10}]}
+    entry = {"matcher": matcher(), "hooks": [{"type": "command", "command": command(skill_dir), "timeout": 10}]}
     groups = hooks.get("PreToolUse", [])
     if entry in groups and len(_without_guard(groups)) == len(groups) - 1:
         return "already registered"
@@ -95,13 +111,16 @@ def remove(path: Path) -> str:
 def status(path: Path, skill_dir: Path) -> str:
     try:
         groups = _load(path).get("hooks", {}).get("PreToolUse", [])
-    except SystemExit:
+    except SettingsFileError:
         return "missing"
-    commands = [str(h.get("command", "")) for g in groups for h in g.get("hooks", [])]
-    ours = [c for c in commands if MARKER in c]
+    ours = [(g.get("matcher"), str(h.get("command", ""))) for g in groups for h in g.get("hooks", [])
+            if MARKER in str(h.get("command", ""))]
     if not ours:
         return "missing"
-    return "ok" if command(skill_dir) in ours else "other_skill_dir"
+    mine = command(skill_dir)
+    if (matcher(), mine) in ours:
+        return "ok"
+    return "old_matcher" if any(c == mine for _, c in ours) else "other_skill_dir"
 
 
 def main(argv: list) -> int:
@@ -120,7 +139,7 @@ def main(argv: list) -> int:
             print(remove(path))
         else:
             print(status(path, Path(args.skill_dir).expanduser().resolve()))
-    except SystemExit as error:
+    except SettingsFileError as error:
         print(str(error), file=sys.stderr)
         return 1
     return 0
