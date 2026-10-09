@@ -25,9 +25,9 @@ Prints the result as JSON. Nothing is saved when the reply is invalid (exit 2).
 """
 from __future__ import annotations
 
+import copy
 import json
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
 
 import fit_filter
@@ -54,7 +54,7 @@ def _new_trip(trip: dict, change: dict) -> dict:
     unknown = sorted(set(change) - set(CHANGE_KEYS))
     if unknown:
         raise runfiles.RunError(f"unknown change {unknown}; a change may set {', '.join(CHANGE_KEYS)}")
-    new = json.loads(json.dumps(trip))
+    new = copy.deepcopy(trip)
     for key in ("check_in", "check_out", "dog"):
         if key in change:
             new[key] = change[key]
@@ -81,22 +81,20 @@ def apply(run_dir: Path, reply: dict) -> dict:
 
     checkpoints = runfiles.read_checkpoints(run_dir)
     before = runfiles.active_strikes(checkpoints)
-    record = {"n": len(checkpoints) + 1, "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-              "strikes": strikes, "change": change}
+    record = {"n": len(checkpoints) + 1, "at": ledger.now(), "strikes": strikes, "change": change}
     checkpoints.append(record)
     after = runfiles.active_strikes(checkpoints)
-    runfiles.write_json(run_dir / "checkpoints.json", {"checkpoints": checkpoints})
+    runfiles.write_json(run_dir / runfiles.CHECKPOINTS, {"checkpoints": checkpoints})
 
     dates_changed = (new_trip["check_in"], new_trip["check_out"]) != (trip["check_in"], trip["check_out"])
     to_check = []
     if change:
-        runfiles.write_json(run_dir / "trip.json", new_trip)
+        runfiles.write_json(run_dir / runfiles.TRIP, new_trip)
         fit = fit_filter.filter_run(run_dir)
         status = status_table.status_run(run_dir)["candidates"]
         if dates_changed:
-            to_check = [c["name"] for c in fit["candidates"]
-                        if c["decision"] == "keep" and c["block"] == "hotels" and c["id"] not in after
-                        and status[c["id"]]["reason"] != "closure"]
+            to_check = [c["name"] for c in runfiles.kept_hotels(fit, after)
+                        if status[c["id"]]["reason"] != "closure"]
     return {
         "checkpoint": record["n"],
         "struck": strikes,
@@ -108,15 +106,20 @@ def apply(run_dir: Path, reply: dict) -> dict:
     }
 
 
+def read_reply(arg: str):
+    """The reply JSON from the file arg, or from stdin when arg is "-"."""
+    text = sys.stdin.read() if arg == "-" else Path(arg).expanduser().read_text(encoding="utf-8")
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as error:
+        raise runfiles.RunError(f"the reply is not valid JSON ({error.msg})")
+
+
 def main(argv: list) -> int:
     if len(argv) != 3:
         print("Usage: python3 apply_reply.py RUN_DIR REPLY_FILE", file=sys.stderr)
         return 2
-    text = sys.stdin.read() if argv[2] == "-" else Path(argv[2]).expanduser().read_text(encoding="utf-8")
-    try:
-        reply = json.loads(text)
-    except json.JSONDecodeError as error:
-        raise runfiles.RunError(f"the reply is not valid JSON ({error.msg})")
+    reply = read_reply(argv[2])
     print(json.dumps(apply(Path(argv[1]).expanduser(), reply), ensure_ascii=False, indent=2))
     return 0
 

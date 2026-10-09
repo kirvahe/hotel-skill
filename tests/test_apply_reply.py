@@ -3,7 +3,6 @@
 All hotels here are made up (see tests/fixtures/pipeline/runkit.py).
 """
 import json
-import re
 import subprocess
 import sys
 import tempfile
@@ -14,18 +13,13 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "pipeline"
 sys.path.insert(0, str(FIXTURES))
 
 import runkit  # noqa: E402
-from runkit import BIN, edit_candidate, pet, read_json  # noqa: E402
+from runkit import BIN, edit_candidate, entries, pet, read_json  # noqa: E402
 
 import apply_reply  # noqa: E402
 import render  # noqa: E402
 import runfiles  # noqa: E402
 
-ENTRY = re.compile(r"^(\d+)\. \*\*(.+?)\*\*", re.MULTILINE)
 EN = render.LABELS["en"]
-
-
-def entries(text: str) -> dict:
-    return {name: int(number) for number, name in ENTRY.findall(text)}
 
 
 def statuses(run: Path) -> dict:

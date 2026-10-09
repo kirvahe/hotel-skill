@@ -50,6 +50,37 @@ class CandidateValidationTest(unittest.TestCase):
             self.assertNotIn("line 1", result.stdout)
 
 
+class ReadRecordsTest(unittest.TestCase):
+    """A JSON line that is not an object is a rejected line, never a crash."""
+
+    def write(self, tmp: str, lines: list) -> Path:
+        path = Path(tmp) / "candidates-reddit.jsonl"
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return path
+
+    def test_lines_that_are_not_objects_are_rejected(self):
+        valid, banned = load("candidate-valid.json"), load("candidate-tripadvisor.json")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write(tmp, [json.dumps(valid), "[1]", "", "5", '{"not json', json.dumps(banned)])
+            records, rejected = ledger.read_records(path, "candidate", label="name")
+        self.assertEqual(records, [valid])
+        self.assertEqual([r["line"] for r in rejected], [2, 4, 5, 6])
+        self.assertEqual(rejected[0], {"line": 2, "problems": ["not a JSON object"]})
+        self.assertEqual(rejected[1], {"line": 4, "problems": ["not a JSON object"]})
+        self.assertTrue(rejected[2]["problems"][0].startswith("not valid JSON ("), rejected[2])
+        self.assertNotIn("name", rejected[2])
+        self.assertEqual(rejected[3]["name"], banned["name"])
+        self.assertEqual(rejected[3]["problems"], ledger.validate_candidate(banned))
+
+    def test_validate_reports_a_line_that_is_not_an_object(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write(tmp, [json.dumps(load("candidate-valid.json")), "[1]"])
+            self.assertEqual(ledger.validate_file(path, "candidate"), ["line 2: not a JSON object"])
+            result = subprocess.run([sys.executable, str(BIN / "ledger.py"), "validate", str(path), "--kind", "candidate"],
+                                    capture_output=True, text=True)
+        self.assertEqual((result.returncode, result.stdout.strip(), result.stderr), (1, "line 2: not a JSON object", ""))
+
+
 class EvidenceValidationTest(unittest.TestCase):
     RECORD = {"candidate": "Hotel Test", "kind": "engine_price", "source_url": "https://hotel.example/book",
               "quote": "175.50 € × 2 nights", "read_at": "2026-10-08T10:00:00+00:00", "price_eur": 175.5,

@@ -7,6 +7,7 @@ Gmail agents write, and engines/ holds saved booking-engine pages for the reader
 """
 from __future__ import annotations
 
+import fnmatch
 import json
 import re
 import shutil
@@ -21,15 +22,21 @@ PIPELINE = HERE.parent / "pipeline"
 AGENTS = HERE / "agents"
 ENGINES = HERE / "engines"
 CONTRACT = REPO / "references" / "briefs" / "research-contract.md"
-if str(BIN) not in sys.path:
-    sys.path.insert(0, str(BIN))
+for folder in (BIN, PIPELINE):
+    if str(folder) not in sys.path:
+        sys.path.insert(0, str(folder))
+
+import ledger  # noqa: E402
+import runfiles  # noqa: E402
+# The pipeline fixture's helpers; the orchestrator tests import them from here.
+from runkit import block, edit_candidate, entries, read_json, read_jsonl, write_json, write_jsonl  # noqa: E402,F401
 
 TASTE = {"taste_summary": "small hotels with character in historic buildings, lively neighbourhoods, "
                           "personal service; no large chains",
          "judgment_rules": ["large or mainstream hotel (over about 60 rooms)"]}
 TRIP = dict(city="Testgrad", country="Testland", languages="A = Spanish, B = English, C = none", lang="en",
             check_in="2026-11-20", check_out="2026-11-22", guests=2, budget_max=200, dog=False, occasion="city-break")
-FAMILIES = ("curated-press", "reddit", "booking-search")
+FAMILIES = ledger.FAMILIES
 
 
 def make_data(tmp) -> Path:
@@ -56,17 +63,18 @@ def approved_contract(tmp) -> Path:
 
 def write_inputs(run: Path) -> None:
     """What the model writes at stage 2 from the profile: the fit rules and the brief inputs."""
-    shutil.copy(PIPELINE / "run" / "fit-rules.json", run / "fit-rules.json")
-    (run / "taste.json").write_text(json.dumps(TASTE, ensure_ascii=False), encoding="utf-8")
+    shutil.copy(PIPELINE / "run" / runfiles.FIT_RULES, run / runfiles.FIT_RULES)
+    (run / runfiles.TASTE).write_text(json.dumps(TASTE, ensure_ascii=False), encoding="utf-8")
 
 
 def research_outputs(run: Path, invalid_reddit: bool = False) -> None:
     """What the three family agents write: candidate files and envelope files."""
     for family in FAMILIES:
-        shutil.copy(PIPELINE / "run" / f"candidates-{family}.jsonl", run / f"candidates-{family}.jsonl")
-        shutil.copy(AGENTS / f"envelope-{family}.json", run / f"envelope-{family}.json")
+        candidates, envelope = runfiles.CANDIDATES.format(family=family), runfiles.ENVELOPE.format(family=family)
+        shutil.copy(PIPELINE / "run" / candidates, run / candidates)
+        shutil.copy(AGENTS / envelope, run / envelope)
     if invalid_reddit:
-        with open(run / "candidates-reddit.jsonl", "a", encoding="utf-8") as handle:
+        with open(run / runfiles.CANDIDATES.format(family="reddit"), "a", encoding="utf-8") as handle:
             handle.write((AGENTS / "invalid-reddit-line.jsonl").read_text(encoding="utf-8"))
 
 
@@ -75,20 +83,7 @@ def agent_files(run: Path, *names: str) -> None:
     so it is newer than the reader's own reads whatever day the tests run on."""
     later = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat(timespec="seconds")
     for name in names:
-        if name.startswith("evidence-final-"):
-            records = [dict(r, read_at=later) for r in read_jsonl(AGENTS / name)]
-            (run / name).write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records), encoding="utf-8")
+        if fnmatch.fnmatch(name, runfiles.FINAL_EVIDENCE.format(batch="*")):
+            write_jsonl(run / name, [dict(r, read_at=later) for r in read_jsonl(AGENTS / name)])
         else:
             shutil.copy(AGENTS / name, run / name)
-
-
-def read_json(path: Path):
-    return json.loads(Path(path).read_text(encoding="utf-8"))
-
-
-def write_json(path: Path, data) -> None:
-    Path(path).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-
-
-def read_jsonl(path: Path) -> list:
-    return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]

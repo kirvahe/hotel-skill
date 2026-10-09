@@ -157,6 +157,16 @@ class MergeTest(unittest.TestCase):
         self.assertNotIn("Hotel Listicle", names)
         self.assertNotIn("Hotel Rumor", names)
 
+    def test_a_line_that_is_not_an_object_is_rejected_not_a_crash(self):
+        with open(self.run / "candidates-reddit.jsonl", "a", encoding="utf-8") as handle:
+            handle.write('[1]\n{"name": "Hotel Bare", "kind": "hotel"}\n')
+        report = merge_candidates.merge_run(self.run)
+        self.assertEqual(report["rejected"], [
+            {"file": "candidates-reddit.jsonl", "line": 3, "problems": ["not a JSON object"]},
+            {"file": "candidates-reddit.jsonl", "line": 4, "name": "Hotel Bare",
+             "problems": ["no source: a candidate needs at least one mention"]}])
+        self.assertEqual(report["merged"], 13)
+
     def test_close_pairs_are_reported_not_merged(self):
         records = read_jsonl(self.run / "candidates-curated-press.jsonl")
         records.append({"name": "Patio Lunar", "kind": "hotel", "city": "Testgrad", "mentions": [

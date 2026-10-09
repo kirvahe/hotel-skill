@@ -68,7 +68,7 @@ def floor_text(floor) -> str:
 
 
 def load_rules(run_dir: Path) -> dict:
-    rules = runfiles.load_json(run_dir, "fit-rules.json",
+    rules = runfiles.load_json(run_dir, runfiles.FIT_RULES,
                                "write it from the profile's hard rules first "
                                "(floor, limited_choice, do_not_recommend, excluded_kinds)")
     problems = []
@@ -124,8 +124,14 @@ def pet_flag(pet: dict):
     return "pet_unknown"
 
 
+def keyed(rows: list) -> list:
+    """(name key, row) for each blacklist or stays row, so a run keys each hotel name once."""
+    return [(runfiles.name_key(row.get("hotel", "")), row) for row in rows]
+
+
 def judge(candidate: dict, *, trip: dict, rules: dict, blacklist: list, stays: list,
           resolved: list = (), evidence: list = ()) -> dict:
+    """The keep / remove decision for one candidate. blacklist and stays are keyed() rows."""
     keys = runfiles.record_keys(candidate)
     city = runfiles.city_key(candidate.get("city"), trip["city_slug"])
 
@@ -136,13 +142,12 @@ def judge(candidate: dict, *, trip: dict, rules: dict, blacklist: list, stays: l
     flags = list(candidate.get("flags", []))
     past_stays = [
         {field: stay[field] for field in ("hotel", "city", "date", "rating", "comment") if stay.get(field)}
-        for stay in stays
-        if not stay.get("upcoming") and same_city(stay.get("city")) and runfiles.name_key(stay.get("hotel", "")) in keys
+        for key, stay in stays
+        if not stay.get("upcoming") and same_city(stay.get("city")) and key in keys
     ]
     floor = rules["floor"]
     removal = None
-    hit = next((row for row in blacklist
-                if same_city(row.get("city")) and runfiles.name_key(row.get("hotel", "")) in keys), None)
+    hit = next((row for key, row in blacklist if same_city(row.get("city")) and key in keys), None)
     chain = _chain_hit([candidate["name"]] + candidate.get("aliases", []), rules["do_not_recommend"])
     failed = next((j for line in resolved for j in line.get("judgments") or [] if j.get("verdict") == "fail"), None)
     pet = pet_view(candidate, evidence)
@@ -185,17 +190,18 @@ def filter_run(run_dir: Path) -> dict:
     trip = runfiles.load_trip(run_dir)
     merged = runfiles.load_merged(run_dir)
     rules = load_rules(run_dir)
-    blacklist = runfiles.load_json(run_dir, "blacklist.json",
+    blacklist = runfiles.load_json(run_dir, runfiles.BLACKLIST,
                                    "save the output of blacklist.py FEEDBACK_DIR there first")
-    stays = runfiles.load_json(run_dir, "stays.json",
+    stays = runfiles.load_json(run_dir, runfiles.STAYS,
                                "save the output of stays.py booking-history.md there first")
     if not isinstance(blacklist.get("blacklist"), list) or not isinstance(stays.get("stays"), list):
         raise runfiles.RunError("blacklist.json and stays.json must be the outputs of blacklist.py and stays.py")
     resolved_lines = runfiles.optional_json(run_dir, runfiles.RESOLVED, {"resolved": []}).get("resolved", [])
     resolved, _ = runfiles.match_by_name(merged, resolved_lines)
     evidence, _ = runfiles.match_by_name(merged, status_table.read_evidence(run_dir)[0])
+    blacklist_rows, stay_rows = keyed(blacklist["blacklist"]), keyed(stays["stays"])
 
-    results = [judge(c, trip=trip, rules=rules, blacklist=blacklist["blacklist"], stays=stays["stays"],
+    results = [judge(c, trip=trip, rules=rules, blacklist=blacklist_rows, stays=stay_rows,
                      resolved=resolved[c["id"]], evidence=evidence[c["id"]])
                for c in merged]
     out = {
@@ -206,7 +212,7 @@ def filter_run(run_dir: Path) -> dict:
         "counts": {"kept": sum(r["decision"] == "keep" for r in results),
                    "removed": sum(r["decision"] == "remove" for r in results)},
     }
-    runfiles.write_json(run_dir / "fit.json", out)
+    runfiles.write_json(run_dir / runfiles.FIT, out)
     return out
 
 

@@ -147,6 +147,13 @@ class StatusRunTest(unittest.TestCase):
         self.assertEqual([r["line"] for r in report["rejected"]], [12])
         self.assertEqual(self.statuses()["Hotel Otoño"]["status"], "unknown")
 
+    def test_a_line_that_is_not_an_object_is_rejected_not_a_crash(self):
+        with open(self.run / "evidence.jsonl", "a", encoding="utf-8") as handle:
+            handle.write("[1]\n")
+        report = status_table.status_run(self.run)
+        self.assertEqual(report["rejected"], [{"line": 12, "problems": ["not a JSON object"]}])
+        self.assertEqual(self.statuses()["Casa Velarta"]["price_eur"], 160)
+
     def test_missing_evidence_file_means_every_candidate_is_unknown(self):
         (self.run / "evidence.jsonl").unlink()
         self.assertEqual({s["status"] for s in self.statuses().values()}, {"unknown"})

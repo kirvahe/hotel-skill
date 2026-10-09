@@ -38,20 +38,19 @@ EOF
 ROOT="$(mktemp -d)"
 DATA="$ROOT/data"
 OUT="$ROOT/out"
-mkdir -p "$DATA/cities" "$OUT"
-cp "$FIX/profile.md" "$DATA/taste-profile.md"
-cp "$PIPE/stays-history.md" "$DATA/booking-history.md"
-cp -R "$PIPE/blacklist-feedback" "$DATA/feedback"
-cp "$FIX/city-cache-testgrad.md" "$DATA/cities/testgrad.md"
-# The real contract with every "set at approval" placeholder filled with a synthetic test value
-# (not a proposal: the real caps await the user's approval).
-python3 - "$REPO/references/briefs/research-contract.md" "$ROOT/contract-approved.md" <<'EOF'
-import re, sys
-from pathlib import Path
-text = Path(sys.argv[1]).read_text(encoding="utf-8")
-Path(sys.argv[2]).write_text(re.sub(r"\{[^{}]*— set at approval\}", "7", text), encoding="utf-8")
-EOF
 CONTRACT="$ROOT/contract-approved.md"
+mkdir -p "$OUT"
+# The same set-up as the unit tests (tests/fixtures/orchestrator/orchkit.py): DATA/ with the profile,
+# the booking history, the feedback files and a warm Testgrad cache, and the real contract with every
+# "set at approval" placeholder filled with a synthetic test value (not a proposal: the real caps
+# await the user's approval).
+python3 - "$FIX" "$ROOT" <<'EOF'
+import sys
+sys.path.insert(0, sys.argv[1])
+import orchkit
+orchkit.make_data(sys.argv[2])
+orchkit.approved_contract(sys.argv[2])
+EOF
 
 # ---- Stage 1: intake (the model asked the R1 question; the answers go into start)
 orch start --data "$DATA" --city Testgrad --country Testland --languages "A = Spanish, B = English, C = none" \

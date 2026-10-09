@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import date
 from pathlib import Path
 
 import ledger
@@ -54,6 +55,7 @@ READER_EVIDENCE = "evidence-reader.jsonl"
 RESOLVER_EVIDENCE, FINAL_EVIDENCE = "evidence-resolver-{batch}.jsonl", "evidence-final-{batch}.jsonl"
 RESOLVED_PART, FINAL_PART = "resolved-{batch}.jsonl", "final-{batch}.jsonl"
 CANDIDATES, ENVELOPE = "candidates-{family}.jsonl", "envelope-{family}.json"
+MERGE_DECISIONS = "merge-decisions.json"
 RESOLVED, FINAL = "resolved.json", "final.json"
 FIT_RULES, TASTE, CONTEXT = "fit-rules.json", "taste.json", "context.json"
 BLACKLIST, STAYS, GMAIL = "blacklist.json", "stays.json", "gmail-bookings.json"
@@ -86,6 +88,12 @@ def record_keys(record: dict) -> set[str]:
     return {name_key(name) for name in names if name}
 
 
+def records_naming(candidate: dict, records: list, key: str = "candidate") -> list:
+    """The records whose record[key] names this candidate by any of its names (record_keys)."""
+    keys = record_keys(candidate)
+    return [r for r in records if name_key(r.get(key, "")) in keys]
+
+
 def match_by_name(merged: list, records: list, key: str = "candidate") -> tuple[dict, list]:
     """Group records by the merged candidate whose name key they share: ({id: [records]}, [unmatched names])."""
     by_id: dict = {c["id"]: [] for c in merged}
@@ -93,12 +101,23 @@ def match_by_name(merged: list, records: list, key: str = "candidate") -> tuple[
     unmatched = []
     for record in records:
         name = str(record.get(key, ""))
-        target = next((cid for cid, ckeys in keys if name_key(name) in ckeys), None)
+        own = name_key(name)
+        target = next((cid for cid, ckeys in keys if own in ckeys), None)
         if target is None:
             unmatched.append(name)
         else:
             by_id[target].append(record)
     return by_id, unmatched
+
+
+def nights(trip: dict) -> int:
+    """Nights of the trip: check_out minus check_in."""
+    return (date.fromisoformat(trip["check_out"]) - date.fromisoformat(trip["check_in"])).days
+
+
+def kept_hotels(fit: dict, struck: dict) -> list:
+    """fit.json candidates the filter kept in the hotels block and the user has not struck out."""
+    return [c for c in fit["candidates"] if c["decision"] == "keep" and c["block"] == "hotels" and c["id"] not in struck]
 
 
 def trip_dir(run_dir: Path) -> Path:
@@ -123,19 +142,9 @@ def merge_evidence(run_dir: Path) -> dict:
     parts = sorted(p for p in run_dir.glob(EVIDENCE_PARTS))
     before = 0
     for path in ([target] if target.is_file() else []) + parts:
-        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError as error:
-                rejected.append({"file": path.name, "line": n, "problems": [f"not valid JSON ({error.msg})"]})
-                continue
-            problems = ledger.validate_evidence(record) if isinstance(record, dict) else ["not a JSON object"]
-            if problems:
-                rejected.append({"file": path.name, "line": n, "candidate": record.get("candidate", ""),
-                                 "problems": problems})
-                continue
+        valid, bad = ledger.read_records(path, "evidence", label="candidate")
+        rejected += [dict({"file": path.name}, **r) for r in bad]
+        for record in valid:
             fingerprint = json.dumps(record, sort_keys=True, ensure_ascii=False)
             if fingerprint not in seen:
                 seen.add(fingerprint)
@@ -179,26 +188,26 @@ def optional_json(run_dir: Path, name: str, default):
 
 
 def load_trip(run_dir: Path) -> dict:
-    trip = load_json(run_dir, "trip.json", "start the run with ledger.py init")
+    trip = load_json(run_dir, TRIP, "start the run with ledger.py init")
     errors = ledger.validate_trip(trip)
     if errors:
-        raise RunError("trip.json: " + "; ".join(errors))
+        raise RunError(f"{TRIP}: " + "; ".join(errors))
     return trip
 
 
 def load_merged(run_dir: Path) -> list:
-    path = Path(run_dir) / "merged.jsonl"
+    path = Path(run_dir) / MERGED
     if not path.is_file():
-        raise RunError(f"merged.jsonl not found in {run_dir}: run merge_candidates.py first")
+        raise RunError(f"{MERGED} not found in {run_dir}: run merge_candidates.py first")
     return read_jsonl(path)
 
 
 def read_numbers(run_dir: Path) -> dict:
-    return optional_json(run_dir, "numbers.json", {"numbers": {}, "next": 1})
+    return optional_json(run_dir, NUMBERS, {"numbers": {}, "next": 1})
 
 
 def read_checkpoints(run_dir: Path) -> list:
-    return optional_json(run_dir, "checkpoints.json", {"checkpoints": []})["checkpoints"]
+    return optional_json(run_dir, CHECKPOINTS, {"checkpoints": []})["checkpoints"]
 
 
 def active_strikes(checkpoints: list) -> dict:

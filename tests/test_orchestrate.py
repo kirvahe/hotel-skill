@@ -4,7 +4,6 @@ checkpoint and the answer, run offline from fixtures (U12).
 All hotels, cities, dogs and trips here are made up (see tests/fixtures/orchestrator/orchkit.py).
 """
 import json
-import re
 import subprocess
 import sys
 import tempfile
@@ -16,7 +15,7 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "orchestrator"
 sys.path.insert(0, str(FIXTURES))
 
 import orchkit  # noqa: E402
-from orchkit import BIN, ENGINES, FAMILIES, read_json, read_jsonl, write_json  # noqa: E402
+from orchkit import BIN, ENGINES, FAMILIES, block, edit_candidate, entries, read_json, write_json  # noqa: E402
 
 import citycache  # noqa: E402
 import ledger  # noqa: E402
@@ -25,26 +24,10 @@ import render  # noqa: E402
 import runfiles  # noqa: E402
 
 TODAY = date(2026, 10, 9)
-ENTRY = re.compile(r"^(\d+)\. \*\*(.+?)\*\*", re.MULTILINE)
 EN = render.LABELS["en"]
 RESOLVER_FILES = ("resolved-1.jsonl", "evidence-resolver-1.jsonl", "resolved-2.jsonl", "evidence-resolver-2.jsonl")
 CLEARLY_BETTER = {"clearly_better": [{"candidate": "Hotel Torre Alta", "reason": "the only valley view in town"}],
                   "not_better": []}
-
-
-def entries(text: str) -> dict:
-    return {name: int(number) for number, name in ENTRY.findall(text)}
-
-
-def block(text: str, name: str) -> str:
-    lines = text.splitlines()
-    start = next(i for i, line in enumerate(lines) if re.match(rf"^\d+\. \*\*{re.escape(name)}\*\*", line))
-    out = [lines[start]]
-    for line in lines[start + 1:]:
-        if not line.startswith("   "):
-            break
-        out.append(line)
-    return "\n".join(out)
 
 
 class Base(unittest.TestCase):
@@ -268,6 +251,17 @@ class CollectTest(Base):
         self.assertEqual(families["curated-press"]["status"], "ran")
         self.assertEqual(self.stage(), "filter")
 
+    def test_a_line_that_is_not_an_object_is_rejected_not_a_crash(self):
+        self.to_research()
+        orchkit.research_outputs(self.run)
+        with open(self.run / "candidates-reddit.jsonl", "a", encoding="utf-8") as handle:
+            handle.write("[1]\n")
+        out = orchestrate.collect(self.run, returned=FAMILIES)
+        self.assertEqual(out["reprompt"][0]["problems"], ["candidates-reddit.jsonl line 3: not a JSON object"])
+        orchestrate.collect(self.run, reprompted=["reddit"])
+        reddit = orchestrate.collect(self.run, returned=["reddit"])["families"]["reddit"]
+        self.assertEqual((reddit["status"], reddit["records"], reddit["invalid"]), ("partial", 2, 1))
+
     def test_a_failed_family_is_reported_without_a_reprompt(self):
         self.to_research()
         orchkit.research_outputs(self.run)
@@ -359,6 +353,26 @@ class ResolverAvailabilityTest(Base):
         self.assertIn("the street outside is loud until 3am", block(text, "Hotel Sombra"))
         self.assertIn("the staircase is steep", block(text, "Hotel Marquesa Vieja"))
         self.assertEqual(self.stage(), "shortlist")
+
+    # R25: the over-budget pool and the shortlist match a verdict by any name of the hotel
+    def test_a_verdict_naming_another_name_of_the_hotel_is_honored_by_the_pool_and_the_shortlist(self):
+        self.to_research()
+        orchkit.research_outputs(self.run)
+        edit_candidate(self.run, "curated-press", "Hotel Torre Alta", local_name="Torre del Valle")
+        orchestrate.collect(self.run, returned=FAMILIES)
+        orchestrate.filter_stage(self.run)
+        orchestrate.fanout(self.run, "resolver", batches=2, contract=self.contract)
+        orchkit.agent_files(self.run, *RESOLVER_FILES)
+        orchestrate.resolved(self.run)
+        orchestrate.availability(self.run, reader_fixtures=ENGINES)
+        write_json(self.run / "verdicts.json", {"clearly_better": [{"candidate": "Torre del Valle",
+                                                                    "reason": "the only valley view in town"}],
+                                                "not_better": []})
+        out = orchestrate.availability(self.run, reader_fixtures=ENGINES)
+        self.assertEqual([(p["name"], p["verdict"]) for p in out["over_budget"]], [("Hotel Torre Alta", "clearly_better")])
+        text = self.shortlist()
+        self.assertIn("the only valley view in town", block(text, "Hotel Torre Alta"))
+        self.assertIn("Hotel Torre Alta", text.split(f"### {EN['beyond_budget']}")[1])
 
     def test_reader_runs_with_the_approved_limits_and_skips_without_a_browser(self):
         self.to_filter()

@@ -56,7 +56,8 @@ def city_slug(name: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text).strip("-")
 
 
-def _is_date(value) -> bool:
+def is_date(value) -> bool:
+    """True when value is a YYYY-MM-DD date."""
     try:
         date.fromisoformat(str(value))
         return True
@@ -111,7 +112,7 @@ def validate_evidence(record: dict) -> list[str]:
         errors.append("no read_at time")
     if record.get("kind") in ENGINE_KINDS:
         shown = record.get("dates_shown") or {}
-        if not (_is_date(shown.get("check_in")) and _is_date(shown.get("check_out"))):
+        if not (is_date(shown.get("check_in")) and is_date(shown.get("check_out"))):
             errors.append("engine evidence needs dates_shown.check_in and dates_shown.check_out")
     if record.get("kind") == "engine_price" and not isinstance(record.get("price_eur"), (int, float)):
         errors.append("engine_price needs a numeric price_eur")
@@ -166,7 +167,7 @@ def validate_final(record: dict) -> list[str]:
         else:
             if cancellation["value"] != "unknown":
                 errors += _source_errors(cancellation, "cancellation")
-            if cancellation.get("deadline") and not _is_date(cancellation["deadline"]):
+            if cancellation.get("deadline") and not is_date(cancellation["deadline"]):
                 errors.append("cancellation deadline must be YYYY-MM-DD")
     return errors
 
@@ -184,9 +185,9 @@ def validate_gmail(record: dict) -> list[str]:
     for n, booking in enumerate(bookings, 1):
         if not booking.get("hotel"):
             errors.append(f"booking {n}: no hotel")
-        if not _is_date(booking.get("check_in")):
+        if not is_date(booking.get("check_in")):
             errors.append(f"booking {n}: check_in must be YYYY-MM-DD")
-        if booking.get("check_out") and not _is_date(booking["check_out"]):
+        if booking.get("check_out") and not is_date(booking["check_out"]):
             errors.append(f"booking {n}: check_out must be YYYY-MM-DD")
     return errors
 
@@ -196,7 +197,7 @@ def validate_trip(record: dict) -> list[str]:
     for field in ("city", "city_slug"):
         if not record.get(field):
             errors.append(f"no {field}")
-    if not (_is_date(record.get("check_in")) and _is_date(record.get("check_out"))):
+    if not (is_date(record.get("check_in")) and is_date(record.get("check_out"))):
         errors.append("check_in and check_out must be YYYY-MM-DD")
     elif record["check_out"] <= record["check_in"]:
         errors.append("check_out must be after check_in")
@@ -235,8 +236,12 @@ VALIDATORS = {
 }
 
 
-def _now() -> str:
+def now() -> str:
+    """The current UTC time, to the second, as the ledger records it."""
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+_now = now
 
 
 def init_run(data_dir: Path, *, city: str, check_in: str, check_out: str, guests: int,
@@ -247,7 +252,7 @@ def init_run(data_dir: Path, *, city: str, check_in: str, check_out: str, guests
     trip = {
         "city": city, "city_slug": slug, "check_in": check_in, "check_out": check_out,
         "guests": guests, "budget": {"min": budget_min, "max": budget_max, "currency": "EUR"},
-        "dog": dog, "created": _now(),
+        "dog": dog, "created": now(),
     }
     errors = validate_trip(trip)
     if errors:
@@ -268,30 +273,47 @@ def write_state(run_dir: Path, *, stage: str, waiting_for: list) -> dict:
     if stage not in STAGES:
         raise ValueError(f"unknown stage {stage}")
     state = read_state(run_dir)
-    state.update({"stage": stage, "waiting_for": list(waiting_for), "updated": _now()})
+    state.update({"stage": stage, "waiting_for": list(waiting_for), "updated": now()})
     state.setdefault("history", []).append({"stage": stage, "at": state["updated"]})
     (Path(run_dir) / "state.json").write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
     return state
 
 
+def read_records(path: Path, kind: str, label: str | None = None) -> tuple[list, list]:
+    """(valid records, rejected lines) of a .jsonl file, checked against the ledger kind.
+
+    A rejected line is {"line": N, "problems": [...]}: not valid JSON, not a JSON object, or the
+    kind's validation problems. When the line is an object, it also carries the record's `label`
+    field (e.g. "candidate" or "name"), so the report can say which hotel it was about.
+    """
+    validator = VALIDATORS[kind]
+    records, rejected = [], []
+    for n, line in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError as error:
+            rejected.append({"line": n, "problems": [f"not valid JSON ({error.msg})"]})
+            continue
+        if not isinstance(record, dict):
+            rejected.append({"line": n, "problems": ["not a JSON object"]})
+            continue
+        problems = validator(record)
+        if problems:
+            labelled = {label: record.get(label, "")} if label else {}
+            rejected.append({"line": n, **labelled, "problems": problems})
+        else:
+            records.append(record)
+    return records, rejected
+
+
 def validate_file(path: Path, kind: str) -> list[str]:
     """Problems as 'line N: ...' for .jsonl files, or plain messages for .json files."""
-    validator = VALIDATORS[kind]
-    text = path.read_text(encoding="utf-8")
-    problems = []
     if path.suffix == ".jsonl":
-        for n, line in enumerate(text.splitlines(), 1):
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError as error:
-                problems.append(f"line {n}: not valid JSON ({error.msg})")
-                continue
-            problems += [f"line {n}: {e}" for e in validator(record)]
-    else:
-        problems = validator(json.loads(text))
-    return problems
+        _, rejected = read_records(path, kind)
+        return [f"line {r['line']}: {problem}" for r in rejected for problem in r["problems"]]
+    return VALIDATORS[kind](json.loads(path.read_text(encoding="utf-8")))
 
 
 def main(argv: list[str]) -> int:

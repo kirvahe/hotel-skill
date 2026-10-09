@@ -319,10 +319,11 @@ def scan(backend, sub: str, cities=(), query=None, since=None, max_pages: int = 
             result["reached"] = _day(fresh[-1]["created_utc"])
         for p in fresh:
             text = f"{p['title']}\n{p['selftext']}"
+            folded = _fold(text)
             matched = []
-            if city_re and city_re.search(_fold(text)):
+            if city_re and city_re.search(folded):
                 matched.append("city")
-            if query_re and (query_re.search(text) or query_re.search(_fold(text))):
+            if query_re and (query_re.search(text) or query_re.search(folded)):
                 matched.append("query")
             if matched:
                 psub = p["subreddit"] or sub

@@ -27,6 +27,7 @@ import re
 import sys
 from pathlib import Path
 
+import ledger
 import runfiles
 
 SEARCHED, SOURCES, RECOMMENDED, STRUCK, EXCLUDED = (
@@ -37,7 +38,7 @@ COLUMNS = {
     RECOMMENDED: ("Name", "Type", "Area", "Rating", "Notes"),
     STRUCK: ("Name", "Reason", "Date", "Trip"),
 }
-FAMILIES = ("curated-press", "reddit", "booking-search")
+FAMILIES = ledger.FAMILIES
 UPDATED = re.compile(r"^(\*?)Updated: (?:\d{4}-\d{2}-\d{2}|YYYY-MM-DD)(\*?)\s*$")
 
 

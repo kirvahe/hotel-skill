@@ -46,9 +46,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import date
+from collections import Counter
 from pathlib import Path
 
+import fit_filter
+import ledger
 import links
 import runfiles
 
@@ -223,15 +225,15 @@ LABELS = {
     },
 }
 FALLBACK_NOTE = "Note: labels in '{lang}' are not available yet; showing English labels."
-PET_FLAGS = ("pet_unknown", "pet_restricted", "pet_room_unconfirmed", "pet_room_not_allowed")
+PET_FLAGS = fit_filter.PET_FLAGS
 FLAG_ORDER = ("booking_only", "score_unverified") + PET_FLAGS + ("below_floor",)
 QUOTED_PET_FLAGS = ("pet_restricted", "pet_room_not_allowed")
-REMOVAL_ORDER = ("below_floor", "blacklist", "dnr_chain", "judgment", "excluded_kind", "pet_not_allowed",
-                 "unavailable", "over_budget", "struck")
-SKIP_LINE_CODES = ("below_floor", "blacklist", "dnr_chain", "judgment", "excluded_kind", "pet_not_allowed",
-                   "unavailable")
+# Removal codes, each tuple extending the last: the fit filter's (another district may help), then
+# "unavailable" (both get a "Skipped:" line), then over budget and struck; the order "Nothing fits" uses.
 DISTRICT_CODES = ("below_floor", "blacklist", "dnr_chain", "judgment", "excluded_kind", "pet_not_allowed")
-FAMILIES = ("curated-press", "reddit", "booking-search")
+SKIP_LINE_CODES = DISTRICT_CODES + ("unavailable",)
+REMOVAL_ORDER = SKIP_LINE_CODES + ("over_budget", "struck")
+FAMILIES = ledger.FAMILIES
 QUESTIONS_MAX, OPTIONS_MIN, OPTIONS_MAX = 4, 2, 4  # the question tool's limits
 
 
@@ -254,19 +256,14 @@ def nightly(price, basis: str, nights: int):
     return price / nights if basis == "unknown" else price
 
 
-def _by_name(merged_candidate: dict, records: list, key: str = "candidate") -> list:
-    keys = runfiles.record_keys(merged_candidate)
-    return [r for r in records if runfiles.name_key(r.get(key, "")) in keys]
-
-
 def build_view(run_dir: Path) -> dict:
     """Sort every merged candidate into hotels / beyond / airbnb / removed and number the shown ones."""
     run_dir = Path(run_dir)
     trip = runfiles.load_trip(run_dir)
     merged = runfiles.load_merged(run_dir)
-    fit = runfiles.load_json(run_dir, "fit.json", "run fit_filter.py first")
-    status = runfiles.load_json(run_dir, "status.json", "run status_table.py first")["candidates"]
-    verdicts = runfiles.optional_json(run_dir, "verdicts.json", {"clearly_better": []})
+    fit = runfiles.load_json(run_dir, runfiles.FIT, "run fit_filter.py first")
+    status = runfiles.load_json(run_dir, runfiles.STATUS, "run status_table.py first")["candidates"]
+    verdicts = runfiles.optional_json(run_dir, runfiles.VERDICTS, {"clearly_better": []})
     struck = runfiles.active_strikes(runfiles.read_checkpoints(run_dir))
     negative = runfiles.optional_json(run_dir, runfiles.RESEARCH, {}).get("negative_reports") or []
     struck_before = ((runfiles.optional_json(run_dir, runfiles.CONTEXT, {}).get("cache") or {}).get("struck_out") or [])
@@ -274,7 +271,7 @@ def build_view(run_dir: Path) -> dict:
     final = runfiles.optional_json(run_dir, runfiles.FINAL, {}).get("final") or []
     fit_by_id = {c["id"]: c for c in fit["candidates"]}
     budget = trip["budget"]["max"]
-    nights = (date.fromisoformat(trip["check_out"]) - date.fromisoformat(trip["check_in"])).days
+    nights = runfiles.nights(trip)
 
     hotels, beyond, airbnb, removed = [], [], [], []
     for candidate in merged:
@@ -293,15 +290,15 @@ def build_view(run_dir: Path) -> dict:
             removed.append({"code": "struck", "name": name, "detail": struck[cid].get("reason", "")})
             continue
         price = state.get("price_eur") if state["status"] == "available" else None
-        own_advice = _by_name(candidate, advice.get("entries") or [])
-        own_final = _by_name(candidate, final)
+        own_advice = runfiles.records_naming(candidate, advice.get("entries") or [])
+        own_final = runfiles.records_naming(candidate, final)
         entry = {
             "id": cid, "name": name, "area": candidate.get("area", ""), "block": verdict["block"],
             "price": price, "price_basis": state.get("price_basis") or "per_night", "flags": [f for f in FLAG_ORDER if f in verdict["flags"]],
             "past_stays": verdict.get("past_stays", []), "scarcity": state.get("scarcity"), "why": "",
             "pet_quote": (verdict.get("pet") or {}).get("quote", ""),
-            "negative": [r.get("quote", "") for r in _by_name(candidate, negative) if r.get("quote")],
-            "struck_before": [r for r in struck_before if runfiles.name_key(r.get("name", "")) in runfiles.record_keys(candidate)],
+            "negative": [r.get("quote", "") for r in runfiles.records_naming(candidate, negative) if r.get("quote")],
+            "struck_before": runfiles.records_naming(candidate, struck_before, key="name"),
             "advice": own_advice[-1] if own_advice else {},
             "final": own_final[-1] if own_final else {},
             "links": links.candidate_links(candidate, trip),
@@ -316,8 +313,8 @@ def build_view(run_dir: Path) -> dict:
             continue
         per_night = nightly(price, entry["price_basis"], nights)
         if per_night is not None and per_night > budget:
-            reason = next((v.get("reason", "") for v in verdicts.get("clearly_better", [])
-                           if runfiles.name_key(v.get("candidate", "")) in runfiles.record_keys(candidate)), None)
+            better = runfiles.records_naming(candidate, verdicts.get("clearly_better", []))  # R25, any of its names
+            reason = better[0].get("reason", "") if better else None
             if reason is None:
                 removed.append({"code": "over_budget", "name": name, "detail": "", "price": price})
             else:
@@ -335,7 +332,7 @@ def build_view(run_dir: Path) -> dict:
             changed = True
         entry["number"] = numbers["numbers"][entry["id"]]
     if changed:
-        runfiles.write_json(run_dir / "numbers.json", numbers)
+        runfiles.write_json(run_dir / runfiles.NUMBERS, numbers)
     for group in (hotels, beyond, airbnb):
         group.sort(key=lambda e: e["number"])
     return {"trip": trip, "rules": fit["rules"], "hotels": hotels, "beyond": beyond,
@@ -410,9 +407,7 @@ def _entry_lines(entry: dict, view: dict, labels: dict, with_links: bool) -> lis
 
 def _nothing_fits(view: dict, labels: dict) -> list:
     removed = view["removed"]
-    counts = {}
-    for item in removed:
-        counts[item["code"]] = counts.get(item["code"], 0) + 1
+    counts = Counter(item["code"] for item in removed)
     reasons = "; ".join(f"{_reason_label(code, view, labels)} — {counts[code]}"
                         for code in REMOVAL_ORDER if code in counts)
     codes = set(counts)
@@ -512,21 +507,27 @@ def _document(view: dict, lang: str, mode: str) -> str:
     return "\n".join(out).rstrip() + "\n"
 
 
-def render_shortlist(run_dir: Path, lang: str = "en") -> str:
-    return _document(build_view(run_dir), lang, "shortlist")
+def shown(view: dict) -> list:
+    """Every numbered entry of a view: hotels, beyond budget, then Airbnb."""
+    return view["hotels"] + view["beyond"] + view["airbnb"]
 
 
-def render_answer(run_dir: Path, lang: str = "en") -> str:
-    return _document(build_view(run_dir), lang, "answer")
+# Each render takes a view already built for the same run, or builds one.
+def render_shortlist(run_dir: Path, lang: str = "en", view: dict | None = None) -> str:
+    return _document(build_view(run_dir) if view is None else view, lang, "shortlist")
 
 
-def question_options(run_dir: Path, lang: str = "en") -> list:
+def render_answer(run_dir: Path, lang: str = "en", view: dict | None = None) -> str:
+    return _document(build_view(run_dir) if view is None else view, lang, "answer")
+
+
+def question_options(run_dir: Path, lang: str = "en", view: dict | None = None) -> list:
     """The shortlist entries as question-tool options, numbered like the plain list."""
-    view = build_view(run_dir)
+    view = build_view(run_dir) if view is None else view
     labels, _ = labels_for(lang)
     return [{"number": e["number"], "label": f"{e['number']}. {e['name']}",
              "description": " · ".join([_status_text(e, labels)] + _flag_texts(e, view, labels))}
-            for e in view["hotels"] + view["beyond"] + view["airbnb"]]
+            for e in shown(view)]
 
 
 def chunk_sizes(count: int) -> list:
@@ -541,8 +542,9 @@ def chunk_sizes(count: int) -> list:
 def question_payload(run_dir: Path, lang: str = "en") -> dict:
     """The checkpoint for the question tool: the shortlist text, then multi-select strike-out questions."""
     labels, _ = labels_for(lang)
-    text = render_shortlist(run_dir, lang)
-    options = question_options(run_dir, lang)
+    view = build_view(run_dir)
+    text = render_shortlist(run_dir, lang, view)
+    options = question_options(run_dir, lang, view)
     sizes = chunk_sizes(len(options))
     if not sizes:
         return {"mode": "plain", "text": text, "questions": []}

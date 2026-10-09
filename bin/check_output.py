@@ -71,19 +71,20 @@ def check(run_dir: Path, text: str) -> list:
     trip = runfiles.load_trip(run_dir)
     merged = runfiles.load_merged(run_dir)
     rules = fit_filter.load_rules(run_dir)
-    blacklist = runfiles.load_json(run_dir, "blacklist.json", "save the output of blacklist.py there")["blacklist"]
+    blacklist = runfiles.load_json(run_dir, runfiles.BLACKLIST, "save the output of blacklist.py there")["blacklist"]
     floor = rules["floor"]
+    # Name keys once per run: every candidate's and every blacklist row's.
+    merged_keys = [(c, runfiles.record_keys(c)) for c in merged]
+    blacklist_keys = [(r, runfiles.name_key(r.get("hotel", ""))) for r in blacklist]
     failures = []
     for entry in parse_entries(text):
         name, key = entry["name"], runfiles.name_key(entry["name"])
-        candidate = next((c for c in merged if key in runfiles.record_keys(c)), None)
-        keys = runfiles.record_keys(candidate) if candidate else {key}
+        candidate, keys = next(((c, ckeys) for c, ckeys in merged_keys if key in ckeys), (None, {key}))
         city = runfiles.city_key(candidate.get("city") if candidate else "", trip["city_slug"])
         if candidate is None:
             failures.append(f"{name}: not in the run ledger")
-        row = next((r for r in blacklist
-                    if (not r.get("city") or runfiles.city_key(r["city"], "") == city)
-                    and runfiles.name_key(r.get("hotel", "")) in keys), None)
+        row = next((r for r, hotel in blacklist_keys
+                    if (not r.get("city") or runfiles.city_key(r["city"], "") == city) and hotel in keys), None)
         if row:
             failures.append(f"{name}: on the blacklist ({row.get('reason', '')})")
         is_airbnb = "airbnb" in entry["section"].lower() or (candidate or {}).get("kind") == "special-format"

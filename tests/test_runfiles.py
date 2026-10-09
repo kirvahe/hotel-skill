@@ -59,6 +59,14 @@ class MergeEvidenceTest(unittest.TestCase):
                          [("evidence-resolver-2.jsonl", 1), ("evidence-resolver-2.jsonl", 2)])
         self.assertNotIn(bad, read_jsonl(self.run / "evidence.jsonl"))
 
+    def test_a_line_that_is_not_an_object_is_rejected_not_a_crash(self):
+        (self.run / "evidence-resolver-3.jsonl").write_text("[1]\n5\n", encoding="utf-8")
+        report = runfiles.merge_evidence(self.run)
+        self.assertEqual(report["rejected"], [
+            {"file": "evidence-resolver-3.jsonl", "line": 1, "problems": ["not a JSON object"]},
+            {"file": "evidence-resolver-3.jsonl", "line": 2, "problems": ["not a JSON object"]}])
+        self.assertEqual(read_jsonl(self.run / "evidence.jsonl"), self.before)
+
     def test_without_an_evidence_file_the_merge_creates_one(self):
         (self.run / "evidence.jsonl").unlink()
         write_jsonl(self.run / "evidence-reader.jsonl", [PRICE])

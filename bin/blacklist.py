@@ -80,6 +80,19 @@ def parse_file(path: Path) -> tuple[list[dict], str | None]:
     return rows, None
 
 
+def read_folder(folder: Path) -> tuple[list[dict], list[dict], int]:
+    """(blacklist rows, skipped files as {"file", "why"}, files read) for every feedback file in folder."""
+    rows: list[dict] = []
+    skipped: list[dict] = []
+    files = sorted(Path(folder).glob("feedback_*_hotels.md"))
+    for path in files:
+        found, skip = parse_file(path)
+        if skip:
+            skipped.append({"file": path.name, "why": skip})
+        rows.extend(found)
+    return rows, skipped, len(files)
+
+
 def main(argv: list[str]) -> int:
     if len(argv) != 2:
         print("Usage: python3 blacklist.py FEEDBACK_DIR", file=sys.stderr)
@@ -91,13 +104,8 @@ def main(argv: list[str]) -> int:
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
 
-    files = sorted(folder.glob("feedback_*_hotels.md"))
-    for path in files:
-        rows, skip = parse_file(path)
-        if skip:
-            result["skipped"].append({"file": path.name, "why": skip})
-        result["blacklist"].extend(rows)
-    result["note"] = f"read {len(files)} file(s), {len(result['blacklist'])} blacklisted hotel(s)"
+    result["blacklist"], result["skipped"], files = read_folder(folder)
+    result["note"] = f"read {files} file(s), {len(result['blacklist'])} blacklisted hotel(s)"
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

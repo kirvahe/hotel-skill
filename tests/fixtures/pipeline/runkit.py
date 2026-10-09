@@ -20,6 +20,7 @@ The fixture run (2 guests, 20-22 November 2026, budget up to 200 EUR, dog at hom
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -30,13 +31,18 @@ BIN = HERE.parent.parent.parent / "bin"
 if str(BIN) not in sys.path:
     sys.path.insert(0, str(BIN))
 
+import runfiles  # noqa: E402
+from runfiles import read_jsonl, write_jsonl  # noqa: E402,F401  (the tests import them from here)
+
+ENTRY = re.compile(r"^(\d+)\. \*\*(.+?)\*\*", re.MULTILINE)
+
 
 def make_run(tmp) -> Path:
     """Copy the fixture run into tmp and add blacklist.json and stays.json from the real parsers."""
     run = Path(tmp) / "run"
     shutil.copytree(HERE / "run", run)
-    for script, arg, out in (("blacklist.py", HERE / "blacklist-feedback", "blacklist.json"),
-                             ("stays.py", HERE / "stays-history.md", "stays.json")):
+    for script, arg, out in (("blacklist.py", HERE / "blacklist-feedback", runfiles.BLACKLIST),
+                             ("stays.py", HERE / "stays-history.md", runfiles.STAYS)):
         result = subprocess.run([sys.executable, str(BIN / script), str(arg)],
                                 capture_output=True, text=True, check=True)
         (run / out).write_text(result.stdout, encoding="utf-8")
@@ -51,17 +57,9 @@ def write_json(path: Path, data) -> None:
     Path(path).write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def read_jsonl(path: Path) -> list:
-    return [json.loads(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip()]
-
-
-def write_jsonl(path: Path, records: list) -> None:
-    Path(path).write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in records), encoding="utf-8")
-
-
 def edit_candidate(run: Path, family: str, name: str, **changes) -> None:
     """Change fields of one candidate record in candidates-{family}.jsonl (None deletes a field)."""
-    path = run / f"candidates-{family}.jsonl"
+    path = run / runfiles.CANDIDATES.format(family=family)
     records = read_jsonl(path)
     hits = [r for r in records if r["name"] == name]
     assert hits, f"{name} not in {path.name}"
@@ -80,6 +78,23 @@ def score(value: str) -> dict:
 
 def pet(value: str) -> dict:
     return {"value": value, "source_url": "https://pets.example/policy", "quote": f"Dogs: {value}"}
+
+
+def entries(text: str) -> dict:
+    """name -> number for every numbered entry of a rendered shortlist or answer."""
+    return {name: int(number) for number, name in ENTRY.findall(text)}
+
+
+def block(text: str, name: str) -> str:
+    """The lines of one entry: its numbered line and the indented lines under it."""
+    lines = text.splitlines()
+    start = next(i for i, line in enumerate(lines) if re.match(rf"^\d+\. \*\*{re.escape(name)}\*\*", line))
+    out = [lines[start]]
+    for line in lines[start + 1:]:
+        if not line.startswith("   "):
+            break
+        out.append(line)
+    return "\n".join(out)
 
 
 def pipeline(run: Path) -> None:

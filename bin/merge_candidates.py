@@ -39,34 +39,24 @@ from pathlib import Path
 import ledger
 import runfiles
 
-FAMILY_ORDER = ("curated-press", "reddit", "booking-search")
+FAMILY_ORDER = ledger.FAMILIES  # curated-press, reddit, booking-search
 PET_VALUES = {"allowed": "allowed", "yes": "allowed", "not allowed": "not allowed", "no": "not allowed",
               "restricted": "restricted"}
 
 
 def _family_rank(path: Path) -> tuple:
-    family = path.stem[len("candidates-"):]
-    return (FAMILY_ORDER.index(family) if family in FAMILY_ORDER else len(FAMILY_ORDER), path.name)
+    names = [runfiles.CANDIDATES.format(family=family) for family in FAMILY_ORDER]
+    return (names.index(path.name) if path.name in names else len(names), path.name)
 
 
 def read_candidates(run_dir: Path) -> tuple[list, list, list]:
     """Return (valid records in order, rejected lines, file names read)."""
     records, rejected, files = [], [], []
-    for path in sorted(Path(run_dir).glob("candidates-*.jsonl"), key=_family_rank):
+    for path in sorted(Path(run_dir).glob(runfiles.CANDIDATES.format(family="*")), key=_family_rank):
         files.append(path.name)
-        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-            if not line.strip():
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError as error:
-                rejected.append({"file": path.name, "line": n, "problems": [f"not valid JSON ({error.msg})"]})
-                continue
-            problems = ledger.validate_candidate(record) if isinstance(record, dict) else ["not a JSON object"]
-            if problems:
-                rejected.append({"file": path.name, "line": n, "name": record.get("name", ""), "problems": problems})
-            else:
-                records.append(record)
+        valid, bad = ledger.read_records(path, "candidate", label="name")
+        records += valid
+        rejected += [dict({"file": path.name}, **r) for r in bad]
     return records, rejected, files
 
 
@@ -113,10 +103,10 @@ class _Groups:
 
 
 def _read_decisions(run_dir: Path) -> list:
-    decisions = runfiles.optional_json(run_dir, "merge-decisions.json", {"same": []})
+    decisions = runfiles.optional_json(run_dir, runfiles.MERGE_DECISIONS, {"same": []})
     pairs = decisions.get("same", []) if isinstance(decisions, dict) else None
     if not isinstance(pairs, list) or not all(isinstance(p, list) and len(p) == 2 for p in pairs):
-        raise runfiles.RunError('merge-decisions.json must be {"same": [["Name A", "Name B"], ...]}')
+        raise runfiles.RunError(runfiles.MERGE_DECISIONS + ' must be {"same": [["Name A", "Name B"], ...]}')
     return pairs
 
 
@@ -213,7 +203,7 @@ def merge_run(run_dir: Path) -> dict:
                 close_calls.append({"names": [name_a, name_b], "city": city_a,
                                     "why": "one name's words are contained in the other's"})
 
-    runfiles.write_jsonl(run_dir / "merged.jsonl", merged)
+    runfiles.write_jsonl(run_dir / runfiles.MERGED, merged)
     return {"merged": len(merged), "files": files, "rejected": rejected,
             "close_calls": close_calls, "kind_conflicts": kind_conflicts}
 

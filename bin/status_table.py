@@ -34,21 +34,10 @@ from __future__ import annotations
 
 import json
 import sys
-from datetime import date
 from pathlib import Path
 
 import ledger
 import runfiles
-
-OTA_HOSTS = ("booking.com", "airbnb.")
-
-
-def _is_date(value) -> bool:
-    try:
-        date.fromisoformat(str(value))
-        return True
-    except ValueError:
-        return False
 
 
 def _dates_match(record: dict, check_in: str, check_out: str) -> bool:
@@ -58,7 +47,7 @@ def _dates_match(record: dict, check_in: str, check_out: str) -> bool:
 
 def _from_ota(record: dict) -> bool:
     url = str(record.get("source_url") or record.get("url") or "").lower()
-    return any(host in url for host in OTA_HOSTS)
+    return any(host in url for host in ledger.OTA_DOMAINS)
 
 
 def closure_overlaps(record: dict, check_in: str, check_out: str):
@@ -66,7 +55,7 @@ def closure_overlaps(record: dict, check_in: str, check_out: str):
     start, end = record.get("closed_from"), record.get("closed_until")
     if not (start or end):
         return None
-    if any(value and not _is_date(value) for value in (start, end)):
+    if any(value and not ledger.is_date(value) for value in (start, end)):
         return None
     return (not start or start < check_out) and (not end or end >= check_in)
 
@@ -105,24 +94,10 @@ def decide(evidence: list, trip: dict) -> dict:
 
 
 def read_evidence(run_dir: Path) -> tuple[list, list]:
-    path = Path(run_dir) / "evidence.jsonl"
-    records, rejected = [], []
+    path = Path(run_dir) / runfiles.EVIDENCE
     if not path.is_file():
-        return records, rejected
-    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError as error:
-            rejected.append({"line": n, "problems": [f"not valid JSON ({error.msg})"]})
-            continue
-        problems = ledger.validate_evidence(record) if isinstance(record, dict) else ["not a JSON object"]
-        if problems:
-            rejected.append({"line": n, "candidate": record.get("candidate", ""), "problems": problems})
-        else:
-            records.append(record)
-    return records, rejected
+        return [], []
+    return ledger.read_records(path, "evidence", label="candidate")
 
 
 def status_run(run_dir: Path) -> dict:
@@ -130,17 +105,7 @@ def status_run(run_dir: Path) -> dict:
     trip = runfiles.load_trip(run_dir)
     merged = runfiles.load_merged(run_dir)
     evidence, rejected = read_evidence(run_dir)
-
-    by_candidate: dict = {c["id"]: [] for c in merged}
-    keys = [(c["id"], runfiles.record_keys(c)) for c in merged]
-    unmatched = []
-    for record in evidence:
-        key = runfiles.name_key(record["candidate"])
-        target = next((cid for cid, ckeys in keys if key in ckeys), None)
-        if target is None:
-            unmatched.append(record["candidate"])
-        else:
-            by_candidate[target].append(record)
+    by_candidate, unmatched = runfiles.match_by_name(merged, evidence)
 
     candidates = {c["id"]: dict({"name": c["name"]}, **decide(by_candidate[c["id"]], trip)) for c in merged}
     counts = {status: sum(s["status"] == status for s in candidates.values())
@@ -148,7 +113,7 @@ def status_run(run_dir: Path) -> dict:
     out = {"trip_dates": {"check_in": trip["check_in"], "check_out": trip["check_out"]},
            "candidates": candidates, "counts": counts,
            "rejected": rejected, "unmatched": sorted(set(unmatched))}
-    runfiles.write_json(run_dir / "status.json", out)
+    runfiles.write_json(run_dir / runfiles.STATUS, out)
     return out
 
 

@@ -14,17 +14,11 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures" / "pipeline"
 sys.path.insert(0, str(FIXTURES))
 
 import runkit  # noqa: E402
-from runkit import BIN, read_json, read_jsonl, score, write_json, write_jsonl  # noqa: E402
+from runkit import BIN, block, entries, read_json, read_jsonl, score, write_json, write_jsonl  # noqa: E402
 
 import render  # noqa: E402
 
-ENTRY = re.compile(r"^(\d+)\. \*\*(.+?)\*\*", re.MULTILINE)
 EN = render.LABELS["en"]
-
-
-def entries(text: str) -> dict:
-    """name -> number for every numbered entry."""
-    return {name: int(number) for number, name in ENTRY.findall(text)}
 
 
 def sections(text: str) -> dict:
@@ -37,18 +31,6 @@ def sections(text: str) -> dict:
         elif current is not None:
             out[current] += line + "\n"
     return out
-
-
-def block(text: str, name: str) -> str:
-    """The lines of one entry: its numbered line and the indented lines under it."""
-    lines = text.splitlines()
-    start = next(i for i, line in enumerate(lines) if re.match(rf"^\d+\. \*\*{re.escape(name)}\*\*", line))
-    out = [lines[start]]
-    for line in lines[start + 1:]:
-        if not line.startswith("   "):
-            break
-        out.append(line)
-    return "\n".join(out)
 
 
 class RenderTest(unittest.TestCase):
