@@ -4,7 +4,7 @@ Agent: `final-check`, batch `{batch}`. You write `{run_dir}/evidence-final-{batc
 
 **Inputs:** `{candidates}` (the candidates the user kept, each with its official URL from the resolver), `{city}`, `{languages}`, `{check_in}`, `{check_out}`, `{guests}`, `{dog}`, `{dog_note}`.
 
-**Caps and tools:** per candidate, `{reader runs per candidate — set at approval}` runs of `{skill}/bin/engine_reader.py` (page timeout `{page timeout s — set at approval}`, give-up `{give-up after s — set at approval}`), `{query cap per candidate — set at approval}` search calls and `{fetch cap per candidate — set at approval}` page reads. Route with fallbacks (contract): `mcp__firecrawl__firecrawl_search` + `mcp__firecrawl__firecrawl_scrape`, then `mcp__exa__web_search_exa` + `mcp__exa__web_fetch_exa`, then `WebSearch` + `WebFetch`.
+**Caps and tools:** per candidate, one run of `{skill}/bin/engine_reader.py` (page timeout 20 s, give-up 45 s), `{query cap per candidate — set at approval}` search calls and `{fetch cap per candidate — set at approval}` page reads. Route with fallbacks (contract): `mcp__firecrawl__firecrawl_search` + `mcp__firecrawl__firecrawl_scrape`, then `mcp__exa__web_search_exa` + `mcp__exa__web_fetch_exa`, then `WebSearch` + `WebFetch`.
 
 **Your job:** for each kept candidate, get the price for the trip dates from the hotel's own booking engine, the cancellation terms of that rate, and, when the dog travels, whether a dog is allowed in that room type. You record evidence; the status table decides what is removed.
 
@@ -15,7 +15,7 @@ Every booking-engine read goes through `{skill}/bin/engine_reader.py`. Per candi
 ```bash
 python3 {skill}/bin/engine_reader.py --candidate "{name}" --url "{official URL}" \
   --check-in {check_in} --check-out {check_out} --guests {guests} \
-  --page-timeout-s {page timeout s — set at approval} --give-up-after-s {give-up after s — set at approval} \
+  --page-timeout-s 20 --give-up-after-s 45 \
   --out {run_dir}/evidence-final-{batch}.jsonl
 ```
 

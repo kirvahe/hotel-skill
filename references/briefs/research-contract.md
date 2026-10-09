@@ -43,7 +43,7 @@ Values written as `{… — set at approval}` are placeholders. The user approve
 | reddit | `{query cap — set at approval}` | — | threads read in full: `{thread cap — set at approval}`; sub scans: `{scan cap — set at approval}`; pages per scan: `{scan pages — set at approval}` |
 | booking-search | `{query cap — set at approval}` | none, ever | |
 | resolver | `{query cap per candidate — set at approval}` | `{fetch cap per candidate — set at approval}` | |
-| final check | `{query cap per candidate — set at approval}` | `{fetch cap per candidate — set at approval}` | reader runs: `{reader runs per candidate — set at approval}`; reader page timeout: `{page timeout s — set at approval}`; reader give-up: `{give-up after s — set at approval}` |
+| final check | `{query cap per candidate — set at approval}` | `{fetch cap per candidate — set at approval}` | reader runs: 1; reader page timeout: 20 s; reader give-up: 45 s |
 
 Every search call counts toward the query cap, Booking-score searches included. Every call that reads a page counts toward the fetch cap. When a cap is reached, stop that activity, write what you have, and report `partial` if a language set or a planned step was left out.
 
