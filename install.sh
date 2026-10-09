@@ -9,6 +9,7 @@
 # Usage:
 #   chmod +x install.sh
 #   ./install.sh [--skill-dir DIR] [--data-dir DIR] [--non-interactive]
+#                [--guard-in-settings | --no-guard-in-settings] [--uninstall-guard]
 #
 # --data-dir links the skill's data/ to a folder you keep elsewhere (for
 # example a synced folder). The folder must already exist. The installer
@@ -23,6 +24,8 @@ DATA_DIR=""
 
 NON_INTERACTIVE=false
 UNINSTALL_HOOK=false
+GUARD_IN_SETTINGS=""   # yes | no | "" (ask; non-interactive keeps an existing registration)
+UNINSTALL_GUARD=false
 HOOK_SCRIPT_NAME="sync-hotel-skill.sh"
 HOOK_SCRIPT_DEST="${HOME}/.claude/scripts/${HOOK_SCRIPT_NAME}"
 SETTINGS_FILE="${HOME}/.claude/settings.json"
@@ -34,6 +37,9 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --non-interactive) NON_INTERACTIVE=true; shift ;;
     --uninstall-hook)  UNINSTALL_HOOK=true; shift ;;
+    --guard-in-settings)    GUARD_IN_SETTINGS=yes; shift ;;
+    --no-guard-in-settings) GUARD_IN_SETTINGS=no; shift ;;
+    --uninstall-guard)      UNINSTALL_GUARD=true; shift ;;
     --skill-dir)
       [[ $# -ge 2 && -n "$2" ]] || die "--skill-dir requires a directory path"
       TARGET="$2"; shift 2 ;;
@@ -41,12 +47,17 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 && -n "$2" ]] || die "--data-dir requires a directory path"
       DATA_DIR="$2"; shift 2 ;;
     --help)
-      echo "Usage: ./install.sh [--skill-dir DIR] [--data-dir DIR] [--non-interactive] [--uninstall-hook] [--help]"
+      echo "Usage: ./install.sh [--skill-dir DIR] [--data-dir DIR] [--non-interactive] [--uninstall-hook]"
+      echo "                    [--guard-in-settings | --no-guard-in-settings] [--uninstall-guard] [--help]"
       echo ""
       echo "  --skill-dir DIR     Install the skill here (default: ~/.claude/skills/hotel)"
       echo "  --data-dir DIR      Link the skill's data/ to this existing folder"
       echo "  --non-interactive   Skip prompts (used by the auto-update sync script)"
       echo "  --uninstall-hook    Remove the SessionStart auto-update hook + sync script"
+      echo "  --guard-in-settings Register the guard hook in ~/.claude/settings.json without asking"
+      echo "                      (needed: a skill's own hook does not run for its subagents)"
+      echo "  --no-guard-in-settings  Do not register it"
+      echo "  --uninstall-guard   Remove the guard hook from ~/.claude/settings.json"
       echo "  --help              Show this help"
       exit 0
       ;;
@@ -160,6 +171,45 @@ setup_auto_update() {
       ;;
   esac
 }
+
+# Register the guard hook in the settings file. A hook in SKILL.md runs only in the main
+# conversation; settings-file hooks also run for subagents, which do the searching (R21).
+# The settings file is backed up before any change (bin/settings_hook.py).
+setup_guard_in_settings() {
+  local helper="${TARGET}/bin/settings_hook.py" state
+  [ -f "${helper}" ] || return 0
+  state="$(python3 "${helper}" status --skill-dir "${TARGET}" --settings "${SETTINGS_FILE}")"
+  if [ -z "${GUARD_IN_SETTINGS}" ]; then
+    if [ "${NON_INTERACTIVE}" = true ]; then
+      [ "${state}" = "missing" ] && return 0   # never add one unasked; keep an existing one current
+      GUARD_IN_SETTINGS=yes
+    else
+      echo ""
+      echo "Register the /hotel guard hook in ${SETTINGS_FILE}?"
+      echo "  It keeps the skill's search agents off Booking and Airbnb pages; a hook inside the"
+      echo "  skill does not reach them. A backup of the file is made first. Without it, /hotel"
+      echo "  stops before searching."
+      read -r -p "  [Y/n] " reply
+      case "$reply" in n|N|no|No|NO) GUARD_IN_SETTINGS=no ;; *) GUARD_IN_SETTINGS=yes ;; esac
+    fi
+  fi
+  if [ "${GUARD_IN_SETTINGS}" = yes ]; then
+    python3 "${helper}" add --skill-dir "${TARGET}" --settings "${SETTINGS_FILE}" \
+      | sed 's/^/==> Guard hook: /' || echo "==> Could not register the guard hook; see the message above"
+  else
+    echo "==> Guard hook not registered in settings. Register later with: ./install.sh --guard-in-settings"
+  fi
+}
+
+# --uninstall-guard short-circuit (no skill files touched)
+if [ "${UNINSTALL_GUARD}" = true ]; then
+  if [ -f "${TARGET}/bin/settings_hook.py" ]; then
+    python3 "${TARGET}/bin/settings_hook.py" remove --settings "${SETTINGS_FILE}" | sed 's/^/==> Guard hook: /'
+  else
+    python3 "${SRC}/bin/settings_hook.py" remove --settings "${SETTINGS_FILE}" | sed 's/^/==> Guard hook: /'
+  fi
+  exit 0
+fi
 
 # --uninstall-hook short-circuit (no skill files touched)
 if [ "${UNINSTALL_HOOK}" = true ]; then
@@ -299,6 +349,9 @@ echo
 
 # Auto-update wiring (deploys sync script + optionally adds SessionStart hook)
 setup_auto_update
+
+# Guard hook in the settings file (covers subagents)
+setup_guard_in_settings
 
 echo
 echo "==> Done."

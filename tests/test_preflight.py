@@ -26,9 +26,10 @@ FILLED_PROFILE = """# Hotel Taste Profile
 """
 
 
-def run(skill_dir: Path):
+def run(skill_dir: Path, settings: Path = None):
+    extra = ["--settings", str(settings)] if settings else []
     result = subprocess.run(
-        [sys.executable, str(SCRIPT), "--skill-dir", str(skill_dir)],
+        [sys.executable, str(SCRIPT), "--skill-dir", str(skill_dir), *extra],
         capture_output=True,
         text=True,
     )
@@ -90,9 +91,10 @@ class GuardHookCheckTest(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.skill = Path(self.tmp.name) / "skill"
+        self.skill = Path(self.tmp.name).resolve() / "skill"
         (self.skill / "data").mkdir(parents=True)
         (self.skill / "data" / "taste-profile.md").write_text(FILLED_PROFILE, encoding="utf-8")
+        self.settings = Path(self.tmp.name) / "settings.json"
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -107,8 +109,18 @@ class GuardHookCheckTest(unittest.TestCase):
         (self.skill / "bin").mkdir()
         (self.skill / "bin" / "guard_hook.py").write_text("# guard\n", encoding="utf-8")
         self.skill_md(f"{self.skill}/bin/guard_hook.py")
-        result, out = run(self.skill)
+        subprocess.run([sys.executable, str(SCRIPT.parent / "settings_hook.py"), "add", "--skill-dir", str(self.skill),
+                        "--settings", str(self.settings)], check=True, capture_output=True)
+        result, out = run(self.skill, self.settings)
         self.assertEqual((result.returncode, out["status"]), (0, "ok"), out)
+
+    def test_guard_not_registered_in_settings_stops(self):
+        (self.skill / "bin").mkdir()
+        (self.skill / "bin" / "guard_hook.py").write_text("# guard\n", encoding="utf-8")
+        self.skill_md(f"{self.skill}/bin/guard_hook.py")
+        result, out = run(self.skill, self.settings)
+        self.assertEqual((result.returncode, out["status"]), (1, "stop"))
+        self.assertIn("settings_hook.py add", out["message"])
 
     def test_guard_hook_not_set_up_by_the_installer_stops(self):
         self.skill_md("__HOTEL_SKILL_DIR__/bin/guard_hook.py")

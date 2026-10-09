@@ -155,6 +155,45 @@ else
   fail "hook command install (installer exited non-zero)"
 fi
 
+# 11. --guard-in-settings registers the guard in the settings file (subagents run settings-file
+#     hooks, not skill hooks), keeps other settings, and the installed preflight passes.
+root="$(new_root)"; fixture_data "$root/mydata"
+mkdir -p "$root/home/.claude"; printf '{"model": "opus"}\n' > "$root/home/.claude/settings.json"
+skill="$root/skills/hotel"
+printf '\n## TOP-3\n\n| Hotel | City | Rating | Why |\n|---|---|---|---|\n| Hotel Alpha | Testgrad | 10 | made up |\n' >> "$root/mydata/taste-profile.md"
+if run_install "$root" --skill-dir "$skill" --data-dir "$root/mydata" --guard-in-settings; then
+  st="$(HOME="$root/home" python3 "$skill/bin/settings_hook.py" status --skill-dir "$skill")"
+  model="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["model"])' "$root/home/.claude/settings.json")"
+  if [[ "$st" == "ok" && "$model" == "opus" ]] && HOME="$root/home" python3 "$skill/bin/preflight.py" >/dev/null; then
+    pass "--guard-in-settings registers the guard and preflight passes"
+  else
+    fail "--guard-in-settings (status '$st', model '$model')"
+  fi
+  # 12. A later non-interactive install (the auto-update path) keeps the registration;
+  #     --uninstall-guard removes only the guard.
+  run_install "$root" --skill-dir "$skill" --data-dir "$root/mydata" >/dev/null
+  st2="$(HOME="$root/home" python3 "$skill/bin/settings_hook.py" status --skill-dir "$skill")"
+  HOME="$root/home" "$REPO/install.sh" --skill-dir "$skill" --uninstall-guard >"$root/out2.log" 2>&1
+  st3="$(HOME="$root/home" python3 "$skill/bin/settings_hook.py" status --skill-dir "$skill")"
+  model3="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["model"])' "$root/home/.claude/settings.json")"
+  if [[ "$st2" == "ok" && "$st3" == "missing" && "$model3" == "opus" ]]; then
+    pass "re-install keeps the guard registration; --uninstall-guard removes only it"
+  else
+    fail "re-install / --uninstall-guard (after re-install '$st2', after uninstall '$st3', model '$model3')"
+  fi
+else
+  fail "--guard-in-settings install (installer exited non-zero)"
+fi
+
+# 13. A non-interactive install without the flag does not touch the settings file.
+root="$(new_root)"; fixture_data "$root/mydata"
+if run_install "$root" --skill-dir "$root/skills/hotel" --data-dir "$root/mydata" \
+   && [[ ! -e "$root/home/.claude/settings.json" ]]; then
+  pass "non-interactive install without --guard-in-settings leaves settings alone"
+else
+  fail "non-interactive install without --guard-in-settings leaves settings alone"
+fi
+
 # 8. A skill folder path with a double quote is refused before anything is written
 root="$(new_root)"
 if run_install "$root" --skill-dir "$root/bad\"name/hotel"; then

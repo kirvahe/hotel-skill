@@ -2,7 +2,7 @@
 """Check the skill's data folder before any search, review or analysis.
 
 Usage:
-    python3 preflight.py [--skill-dir DIR]
+    python3 preflight.py [--skill-dir DIR] [--settings FILE]
 
 DIR defaults to the folder that contains this bin/ directory (the installed
 skill). The data folder is DIR/data: a link to an existing folder or a real
@@ -14,15 +14,21 @@ A run stops when data/ is absent, links to a missing folder, has no
 taste-profile.md, or the profile is still the unfilled template; and when
 DIR/SKILL.md does not name an installed guard hook (bin/guard_hook.py, R21):
 the hook command lets every call through when its file is gone, so this is
-where a moved or hand-copied skill is caught.
+where a moved or hand-copied skill is caught. It also stops when the Claude Code
+settings file (FILE, default ~/.claude/settings.json) does not register the guard
+for this skill folder: only a settings-file hook covers the search subagents.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
 import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import settings_hook  # noqa: E402
 
 PLACEHOLDER_PREFIXES = ("<!--", "_TBD", "{")
 GUARD_PATH = re.compile(r"""([^\s"']*/bin/guard_hook\.py)""")
@@ -52,7 +58,7 @@ def top3_hotels(profile: str) -> int | None:
     return count
 
 
-def guard_problem(skill_dir: Path) -> str | None:
+def guard_problem(skill_dir: Path, settings: Path = settings_hook.DEFAULT_SETTINGS) -> str | None:
     """Why the guard hook is not usable, or None. A skill folder without SKILL.md is not checked."""
     skill_md = skill_dir / "SKILL.md"
     if not skill_md.is_file():
@@ -66,15 +72,21 @@ def guard_problem(skill_dir: Path) -> str | None:
     missing = [path for path in dict.fromkeys(paths) if not Path(path).is_file()]
     if missing:
         return f"The guard hook file is missing: {missing[0]} (was the skill folder moved?). {reinstall}"
+    registered = settings_hook.status(settings, skill_dir.resolve())
+    if registered != "ok":
+        where = "for another skill folder" if registered == "other_skill_dir" else "yet"
+        return (f"The guard hook is not registered in {settings} {where}. Without it the search agents are not "
+                f"kept off Booking and Airbnb. Register it with: python3 {skill_dir.resolve()}/bin/settings_hook.py "
+                f"add --skill-dir {skill_dir.resolve()}  (or re-install with ./install.sh --guard-in-settings)")
     return None
 
 
-def check(skill_dir: Path) -> dict:
+def check(skill_dir: Path, settings: Path = settings_hook.DEFAULT_SETTINGS) -> dict:
     data = skill_dir / "data"
     result = {"status": "stop", "message": "", "data_root": "", "warnings": []}
     reinstall = "Re-install with: ./install.sh --data-dir /path/to/your/hotel-data"
 
-    problem = guard_problem(skill_dir)
+    problem = guard_problem(skill_dir, settings)
     if problem:
         result["message"] = problem
         return result
@@ -109,13 +121,11 @@ def check(skill_dir: Path) -> dict:
 
 
 def main(argv: list[str]) -> int:
-    skill_dir = Path(__file__).resolve().parent.parent
-    if len(argv) == 3 and argv[1] == "--skill-dir":
-        skill_dir = Path(argv[2]).expanduser()
-    elif len(argv) != 1:
-        print("Usage: python3 preflight.py [--skill-dir DIR]", file=sys.stderr)
-        return 2
-    result = check(skill_dir)
+    parser = argparse.ArgumentParser(description="Check the skill before any search, review or analysis.")
+    parser.add_argument("--skill-dir", default=str(Path(__file__).resolve().parent.parent))
+    parser.add_argument("--settings", default=str(settings_hook.DEFAULT_SETTINGS))
+    args = parser.parse_args(argv[1:])
+    result = check(Path(args.skill_dir).expanduser(), Path(args.settings).expanduser())
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["status"] == "ok" else 1
 

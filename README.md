@@ -88,6 +88,17 @@ Onboarding is currently manual via the template; a guided flow is on the v1.3 ro
 - **Claude Code** with skill support
 - **Web search MCP** (Exa, Firecrawl, or equivalent) — strongly recommended. The skill auto-detects available search tools. Without web search, it falls back to your booking history and saved profile only.
 
+## Guard hook
+
+The skill never reads Booking or Airbnb pages, in any browser or fetch tool; it gives you dated links instead. `bin/guard_hook.py` enforces that as a Claude Code PreToolUse hook. It also keeps Gmail read-only and blocks screen-reading browser calls while a hotel search is open.
+
+The hook is registered twice:
+
+- in the installed `SKILL.md`, which covers the main conversation once `/hotel` is invoked;
+- in `~/.claude/settings.json`, which also covers the search subagents. A hook declared in a skill does not run for its subagents, so `/hotel` stops before searching until this one is in place.
+
+The installer asks before adding the settings hook, and backs up the file first. Use `./install.sh --guard-in-settings` to add it without the question, or `--uninstall-guard` to remove it. The hook takes about 20 ms per call. If the skill folder is moved, the hook lets calls through and `/hotel` asks you to re-install.
+
 ## Background browser (optional)
 
 `bin/engine_reader.py` checks a hotel's own website and booking engine for your dates in a browser with no visible window. It reads what the page shows and records one of three outcomes: available (with the price in EUR), no rooms, or unknown. It records the dates the page actually shows, so a price for other dates never counts as a price for yours.
