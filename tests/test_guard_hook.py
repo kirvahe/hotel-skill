@@ -22,7 +22,7 @@ import guard_hook as guard  # noqa: E402
 HOTEL_SITE = "https://hotel-inventado.example/reservas?entrada=2026-11-20&salida=2026-11-22"
 BOOKING_PAGE = "https://www.booking.com/hotel/es/hotel-inventado.es.html?checkin=2026-11-20"
 AIRBNB_PAGE = "https://www.airbnb.es/rooms/123456789"
-GMAIL_SERVERS = ("mcp__gmail-personal__", "mcp__gmail-work__", "mcp__claude_ai_Gmail__")
+GMAIL_SERVERS = ("mcp__gmail-personal__", "mcp__gmail-work__", "mcp__claude_ai_Gmail__", "mcp__plugin_mail_gmail__")
 GMAIL_WRITES = ("send_message", "forward", "reply", "create_draft", "update_draft", "delete_draft",
                 "label_thread", "label_message", "unlabel_thread", "create_label", "create_filter",
                 "delete_filter", "modify_messages", "update_message_labels", "trash_thread",

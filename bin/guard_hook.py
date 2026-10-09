@@ -18,7 +18,7 @@ Always blocked:
   - Bash commands that name a Booking or Airbnb host and fetch something (curl, wget, open,
     urllib.request, requests, fetch(...), a headless browser).
 Blocked only while a find-hotel run is open:
-  - Gmail tools outside the read-only list;
+  - Gmail tools (any MCP server with "gmail" in its name) outside the read-only list;
   - browser and screen calls that name no URL (a tab read, a click, a screenshot).
 
 A run is open when any data/trips/*/run folder (bin/ledger.py) has a stage other than "done".
@@ -50,7 +50,6 @@ SKILL_DIR = Path(__file__).resolve().parent.parent
 
 BROWSER_SERVERS = ("playwright", "claude-in-chrome", "computer-use", "cmux-cua", "Claude_Browser", "remote-devices")
 FETCH_SERVERS = ("firecrawl", "fetch", "exa", "claude_ai_Exa")
-GMAIL_SERVERS = ("gmail-personal", "gmail-work", "claude_ai_Gmail")
 GMAIL_READS = frozenset({"search_threads", "get_thread", "get_message", "list_labels", "list_drafts", "get_draft",
                          "mailbox_info", "list_filters", "list_events", "get_event", "list_calendars"})
 # Fields that hold code a browser runs (page scripts, Firecrawl interact code).
@@ -292,7 +291,7 @@ def decide(event: dict) -> str | None:
         return check_browser(tool, tool_input)
     if _on(server, FETCH_SERVERS):
         return check_fetch(tool, tool_input)
-    if _on(server, GMAIL_SERVERS):
+    if "gmail" in server.lower():  # any Gmail server, whatever the user named it
         return check_gmail(tool, name)
     return None
 
