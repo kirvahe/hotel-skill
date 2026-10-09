@@ -6,6 +6,7 @@ a subprocess with the hook JSON on stdin, the way Claude Code runs it. Nothing r
 """
 import json
 import os
+import random
 import re
 import shutil
 import subprocess
@@ -99,23 +100,44 @@ class HostRuleTest(unittest.TestCase):
                 self.assertIsNone(guard.refused_host(url))
 
 
+# The host regex the guard used before its linear host scan; the scan must find exactly what it found.
+REGEX_HOST_IN_TEXT = re.compile(r"(?i)(?<![\w-])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63})(?![\w-])")
+HOST_TEXTS = ["curl -sL 'https://www.booking.com/x'", "site:booking.com hotel", "AIRBNB.es/rooms/1",
+              "see www.boo\u212aing.com", "https%3A%2F%2Fwww.airbnb.com%2Frooms", "%2562ooking.com",
+              "notbooking.com", "airbnb-fans.example", "booking.com.hotel-inventado.example", "git status",
+              "grep -rn 'Booking' /tmp/run/", "hotel-inventado.example/reservas", "", "a." * 50 + "booking.com",
+              "www.booking.com.x1", "a.b.c_d.booking.com", "-booking.com", "booking.com-", "booking.com.",
+              "x." + "a" * 64 + ".booking.com", "a" * 64 + ".booking.com", "booking." + "c" * 64, "a..booking.com",
+              "1.2.booking.com", "\u0130.booking.com", "booking.\u017fom", "airbnb.co.uk/x airbnb.es", "\u00e9.booking.com"]
+
+
 def _full_scan(text):
-    """refused_in_text without its quick check: the host scan on every form of the text."""
+    """refused_in_text as it was: the regex host scan on every form of the text, without the quick check."""
     for form in guard._forms(text):
-        for host in guard.HOST_IN_TEXT.findall(form):
+        for host in REGEX_HOST_IN_TEXT.findall(form):
             if guard._refused(host.lower()):
                 return host.lower()
     return None
 
 
+def _random_texts(count, seed=20261009):
+    """Short strings built from the pieces host names and their boundaries are made of."""
+    pieces = ["booking", "airbnb", "com", "es", "co", "uk", "a", "b1", "x-y", "-", ".", ".", ".", "/", ":", " ",
+              "_", "\u00e9", "\u212a", "\u0130", "\u0131", "\u017f", "9", "%2E", "c" * 62, "d" * 64]
+    rng = random.Random(seed)
+    return ["".join(rng.choice(pieces) for _ in range(rng.randint(1, 14))) for _ in range(count)]
+
+
 class HostInTextTest(unittest.TestCase):
     def test_quick_check_gives_the_full_scans_answer(self):
-        texts = ["curl -sL 'https://www.booking.com/x'", "site:booking.com hotel", "AIRBNB.es/rooms/1",
-                 "see www.boo\u212aing.com", "https%3A%2F%2Fwww.airbnb.com%2Frooms", "%2562ooking.com",
-                 "notbooking.com", "airbnb-fans.example", "booking.com.hotel-inventado.example", "git status",
-                 "grep -rn 'Booking' /tmp/run/", "hotel-inventado.example/reservas", "", "a." * 50 + "booking.com"]
-        for text in texts:
+        for text in HOST_TEXTS:
             with self.subTest(text=text):
+                self.assertEqual(guard.refused_in_text(text), _full_scan(text))
+
+    def test_linear_host_scan_finds_what_the_regex_found(self):
+        for text in HOST_TEXTS + _random_texts(4000):
+            with self.subTest(text=text):
+                self.assertEqual(list(guard.hosts_in_text(text)), REGEX_HOST_IN_TEXT.findall(text))
                 self.assertEqual(guard.refused_in_text(text), _full_scan(text))
 
     def test_long_dotted_text_without_booking_or_airbnb_is_quick(self):
@@ -124,6 +146,25 @@ class HostInTextTest(unittest.TestCase):
         self.assertIsNone(guard.refused_in_text(text))
         self.assertIsNone(guard.decide({"tool_name": "Bash", "tool_input": {"command": f"curl {text}"}}))
         self.assertLess(time.monotonic() - start, 0.2)
+
+    def test_long_dotted_text_with_booking_is_quick(self):
+        chain = "a." * 32000 + "-"  # 64 KB: the regex scan took over 40 s on this, past the hook's 10 s timeout
+        for text in ("booking " + chain, chain + "booking", "https://hotel-inventado.example/?q=booking&x=" + chain):
+            with self.subTest(text=text[:20]):
+                start = time.monotonic()
+                self.assertIsNone(guard.refused_in_text(text))
+                self.assertIsNone(guard.decide({"tool_name": "Bash", "tool_input": {"command": f"curl {text}"}}))
+                self.assertIsNone(guard.decide({"tool_name": "WebFetch", "tool_input": {"url": text}}))
+                self.assertLess(time.monotonic() - start, 0.5)
+
+    def test_url_with_many_embedded_schemes_is_quick_and_still_checked(self):
+        many = "https://hotel-inventado.example/" + "http://a" * 16000  # 128 KB, 16000 embedded URLs
+        start = time.monotonic()
+        self.assertIsNone(guard.decide({"tool_name": "WebFetch", "tool_input": {"url": many + "booking"}}))
+        self.assertLess(time.monotonic() - start, 0.5)
+        self.assertEqual(guard.refused_in_url(many + "https://www.booking.com/x"), "www.booking.com")
+        self.assertEqual(guard.refused_in_url("https://proxy.example/https://user@www.booking.com/x"), "www.booking.com")
+        self.assertEqual(guard.refused_in_url("https://proxy.example/http:/www.booking.com/x"), "www.booking.com")
 
     def test_importing_the_guard_loads_no_pathlib_or_datetime(self):
         code = ("import sys; before = set(sys.modules); sys.path.insert(0, sys.argv[1]); import guard_hook; "
@@ -134,7 +175,7 @@ class HostInTextTest(unittest.TestCase):
 
 class MatcherTest(unittest.TestCase):
     """MATCHER starts the hook for every tool decide() acts on, and for no other MCP server."""
-    OPEN_RUN = "trips/ciudad-inventada-2026-11/run, stage shortlist"
+    OPEN_RUN = "/skill/data/trips/ciudad-inventada-2026-11/run"
     TRIGGER = {"url": BOOKING_PAGE, "command": f"curl '{BOOKING_PAGE}'"}
 
     def acts(self, tool):
@@ -257,6 +298,27 @@ class FetchTest(GuardTest):
             with self.subTest(url=url):
                 self.assertBlocked(self.hook("WebFetch", {"url": url, "prompt": "x"}))
 
+    def test_booking_host_without_a_scheme_inside_another_url_is_blocked(self):
+        urls = ("https://translate.google.com/translate?sl=auto&tl=en&u=www.booking.com/hotel/es/x.html",
+                "https://webcache.googleusercontent.com/search?q=cache:www.booking.com/hotel/es/x.html",
+                "https://web.archive.org/web/2025/www.booking.com/hotel/es/x.html",
+                "https://web.archive.org/web/2025/airbnb.es/rooms/1",
+                "https://translate.example/?u=www.booking.com%2Fhotel%2Fes%2Fx.html")
+        for url in urls:
+            for tool in ("WebFetch", "mcp__firecrawl__firecrawl_scrape"):
+                with self.subTest(url=url, tool=tool):
+                    result = self.hook(tool, {"url": url})
+                    self.assertBlocked(result)
+                    self.assertRegex(result.stderr, r"would fetch (www\.booking\.com|airbnb\.es)\.")
+
+    def test_hotel_url_that_only_mentions_booking_passes(self):
+        urls = (HOTEL_SITE + "&utm_source=booking", "https://hotel-inventado.example/blog/booking-tips?ref=airbnb",
+                "https://hotel-inventado.example/blog/booking.com-review")
+        for url in urls:
+            for tool in ("WebFetch", "mcp__firecrawl__firecrawl_scrape"):
+                with self.subTest(url=url, tool=tool):
+                    self.assertAllowed(self.hook(tool, {"url": url}))
+
     def test_browser_code_in_a_fetch_call_is_checked(self):
         self.assertBlocked(self.hook("mcp__firecrawl__firecrawl_interact", {
             "url": HOTEL_SITE, "code": "await page.goto('https://www.booking.com/')", "language": "node"}))
@@ -295,9 +357,21 @@ class SearchTest(GuardTest):
             with self.subTest(query=tool_input["query"]):
                 self.assertBlocked(self.hook("mcp__firecrawl__firecrawl_search", tool_input))
 
-    def test_search_that_fetches_other_results_passes(self):
-        self.assertAllowed(self.hook("mcp__firecrawl__firecrawl_search", {
-            "query": "hoteles con encanto Ciudad Inventada prensa local", "scrapeOptions": {"formats": ["markdown"]}}))
+    def test_any_search_that_fetches_its_result_pages_is_blocked(self):
+        # A hotel's name alone brings up its Booking page among the results, which scrapeOptions would fetch.
+        fetch = {"formats": ["markdown"]}
+        cases = [
+            ("mcp__firecrawl__firecrawl_search", {"query": '"Hotel Inventado" Ciudad Inventada', "scrapeOptions": fetch}),
+            ("mcp__firecrawl__firecrawl_search", {"query": "hoteles con encanto Ciudad Inventada prensa local",
+                                                  "scrapeOptions": fetch, "excludeDomains": ["booking.com"]}),
+            ("mcp__plugin_firecrawl_firecrawl__firecrawl_search", {"query": "Hotel Inventado", "scrapeOptions": {}}),
+        ]
+        for tool, tool_input in cases:
+            with self.subTest(tool=tool, query=tool_input["query"]):
+                result = self.hook(tool, tool_input)
+                self.assertBlocked(result)
+                self.assertIn("without scrapeOptions", result.stderr)
+                self.assertIn("one by one", result.stderr)
 
 
 class BashTest(GuardTest):
@@ -314,6 +388,38 @@ class BashTest(GuardTest):
         for command in commands:
             with self.subTest(command=command):
                 self.assertBlocked(self.hook("Bash", {"command": command, "description": "x"}))
+
+    def test_fetchers_behind_wrappers_shells_and_eval_are_blocked(self):
+        commands = [
+            f"timeout 20 curl -s '{BOOKING_PAGE}'",
+            f"gtimeout 20s curl -s '{BOOKING_PAGE}'",
+            f"timeout -k 5 -s KILL 1.5m wget -q {AIRBNB_PAGE}",
+            f"stdbuf -oL curl -s '{BOOKING_PAGE}'",
+            f"ionice -c 3 curl -s '{BOOKING_PAGE}'",
+            f"nice -n 5 curl '{BOOKING_PAGE}'",
+            f'bash -c "curl -s {BOOKING_PAGE}"',
+            f"sh -c 'wget -qO- {AIRBNB_PAGE}'",
+            f'zsh -c "curl -s {BOOKING_PAGE}"',
+            f'/bin/bash -e -lc "(curl -s {BOOKING_PAGE})"',
+            f"eval curl -s '{BOOKING_PAGE}'",
+            f'eval "curl -s {BOOKING_PAGE}"',
+            f"cd /tmp && FOO=1 timeout 20 env BAR=2 sh -c 'nice curl -s {BOOKING_PAGE}'",
+        ]
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertBlocked(self.hook("Bash", {"command": command}))
+
+    def test_wrapped_ordinary_commands_pass(self):
+        commands = [
+            f"timeout 20 python3 bin/links.py --name 'Hotel Inventado' # {BOOKING_PAGE}",
+            "bash -c \"grep -rn 'booking.com' /tmp/run/\"",
+            f"bash bin/report.sh '{BOOKING_PAGE}'",
+            f"eval echo '{BOOKING_PAGE}'",
+            f"nice -n 5 python3 - <<'EOF'\nopen('/tmp/run/x.jsonl', 'a').write('{BOOKING_PAGE}')\nEOF",
+        ]
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertAllowed(self.hook("Bash", {"command": command}))
 
     def test_ordinary_commands_pass(self):
         record = json.dumps({"name": "Hotel Inventado", "booking_score": {"source_url": BOOKING_PAGE}})
@@ -378,6 +484,27 @@ class GmailTest(GuardTest):
         run = self.open_run()
         (run / "trip.json").write_text(json.dumps({"check_in": "2099-01-10", "check_out": "2099-01-12"}), encoding="utf-8")
         self.assertBlocked(self.hook("mcp__claude_ai_Gmail__send_message", {"to": "x@example.com"}), rule="KTD9")
+
+    def test_open_run_reasons_name_the_run_and_a_close_command_that_works(self):
+        shutil.copytree(BIN, self.skill / "bin", dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
+        run = self.open_run()
+        trip = {"city": "Ciudad Inventada", "city_slug": "ciudad-inventada", "check_in": "2099-11-20",
+                "check_out": "2099-11-22", "guests": 2, "budget": {"currency": "EUR", "max": 200}, "dog": False}
+        (run / "trip.json").write_text(json.dumps(trip), encoding="utf-8")
+        skill = os.path.realpath(self.skill)
+        run_dir = f"{skill}/data/trips/ciudad-inventada-2026-11/run"
+        close = f'python3 "{skill}/bin/orchestrate.py" close "{run_dir}" --reason abandoned'
+        for tool, tool_input in (("mcp__claude_ai_Gmail__send_message", {"to": "x@example.com"}),
+                                 ("mcp__computer-use__screenshot", {})):
+            with self.subTest(tool=tool):
+                result = self.hook(tool, tool_input)
+                self.assertBlocked(result, rule="KTD9")
+                self.assertIn(f"({run_dir}, stage shortlist)", result.stderr)
+                self.assertIn(close, result.stderr)
+        closed = subprocess.run(["sh", "-c", close], capture_output=True, text=True, cwd=str(self.tmp))
+        self.assertEqual(closed.returncode, 0, closed.stderr)
+        self.assertAllowed(self.hook("mcp__claude_ai_Gmail__send_message", {"to": "x@example.com"}))
+        self.assertAllowed(self.hook("mcp__computer-use__screenshot", {}))
 
     def test_missing_data_folder_means_no_run(self):
         (self.skill / "data").unlink()

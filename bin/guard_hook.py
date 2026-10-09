@@ -13,12 +13,15 @@ Always blocked:
     other text (typed text, page scripts);
   - fetch, scrape, crawl, map, extract, interact and research-agent calls aimed at a Booking or
     Airbnb URL: every URL field is checked, with URLs embedded in another URL (proxies,
-    percent-encoded parameters) and the browser code these calls carry;
-  - searches that also fetch result pages (Firecrawl scrapeOptions) when the query or the
-    included domains target Booking or Airbnb. A plain search passes, `site:booking.com`
-    included, because Booking scores come from search results (R23);
+    percent-encoded parameters, a host written without a scheme in the path or query, as
+    translate, cache and archive URLs carry it) and the browser code these calls carry;
+  - searches that also fetch their result pages (Firecrawl scrapeOptions), whatever the query:
+    a hotel's results often include its Booking page, and the research contract never passes
+    scrapeOptions. A plain search passes, `site:booking.com` included, because Booking scores
+    come from search results (R23);
   - Bash commands that name a Booking or Airbnb host and fetch something (curl, wget, open,
-    urllib.request, requests, fetch(...), a headless browser).
+    urllib.request, requests, fetch(...), a headless browser), also behind wrappers (timeout,
+    nice -n 5, env, sudo), eval and sh -c "...".
 Blocked only while a find-hotel run is open:
   - Gmail tools (any MCP server with "gmail" in its name) outside the read-only list;
   - browser and screen calls that name no URL (a tab read, a click, a screenshot).
@@ -27,7 +30,9 @@ A run is open when any data/trips/*/run folder (bin/ledger.py) has a stage other
 its check-in date (trip.json) has not passed. A run folder without state.json is at "intake" (as
 ledger.read_state reads it); a state file that cannot be parsed, or a trip.json without a
 readable check-in, counts as open. There is no age limit: an unfinished run stays open until its
-check-in date or until the skill closes it, because the skill resumes open runs.
+check-in date or until the skill closes it, because the skill resumes open runs. The guard runs in
+every session, so these block reasons name the run's absolute path and the orchestrate.py close
+command that ends it.
 
 Host rule: booking.com and its subdomains, and any host with an "airbnb" label (refused_host,
 which bin/engine_reader.py imports from here).
@@ -66,10 +71,15 @@ CODE_KEYS = frozenset({"code", "script", "function", "javascript", "js"})
 # Fields of research-agent and interact calls that say where to go.
 TASK_KEYS = ("prompt", "query", "systemPrompt")
 
-# A host name inside free text: "www.booking.com" in a URL, "site:booking.com", "airbnb.es".
-HOST_IN_TEXT = re.compile(r"(?i)(?<![\w-])((?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63})(?![\w-])")
+# Host names inside free text ("www.booking.com" in a URL, "site:booking.com", "airbnb.es"), as hosts_in_text
+# reads them: runs of word characters and hyphens, a label (1-63 letters, digits or hyphens, no hyphen at
+# either end), and a top-level label (2-63 letters).
+WORD_RUN = re.compile(r"[\w-]+")
+LABEL = re.compile(r"(?i)[a-z0-9-]{1,63}")
+TOP_LABEL = re.compile(r"(?i)[a-z]{2,63}")
 # Every http(s) scheme in a string, so a URL embedded in another URL is checked too.
 SCHEME = re.compile(r"(?i)https?:/+")
+AUTHORITY_END = re.compile(r"[/?#]")
 AIRBNB_WORD = re.compile(r"(?i)\bairbnb\b")
 
 # Bash: programs that fetch when they start a command, and fetching code inside a command.
@@ -77,7 +87,12 @@ SHELL_FETCHERS = frozenset({"curl", "wget", "aria2c", "lynx", "w3m", "links", "e
                             "http", "https", "xh", "httpie", "chromium", "chromium-browser", "google-chrome", "chrome",
                             "firefox", "safari", "playwright"})
 SHELL_WRAPPERS = frozenset({"sudo", "env", "command", "exec", "nohup", "time", "xargs", "then", "do", "else",
-                            "builtin", "nice", "caffeinate"})
+                            "builtin", "nice", "caffeinate", "timeout", "gtimeout", "stdbuf", "ionice", "eval"})
+# Shells whose -c option makes the next word the command they run (bash -c "curl ...", sh -lc '...').
+SHELLS = frozenset({"sh", "bash", "zsh", "dash", "ksh"})
+SHELL_STRING_OPTION = re.compile(r"-[A-Za-z]*c[A-Za-z]*")
+# Option values a wrapper takes: a count or a duration (nice -n 5, timeout 1.5m), a signal (timeout -s KILL).
+WRAPPER_VALUE = re.compile(r"\d[\d.]*[smhd]?|(?:SIG)?[A-Z]+[0-9]*")
 SHELL_SEGMENTS = re.compile(r"\$\(|`|&&|\|\||[;&|\n]")
 ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
 CODE_FETCH = re.compile(
@@ -112,35 +127,91 @@ def _refused(host: str) -> str | None:
     return refused_host("http://" + host) if host else None
 
 
+def _authority_end(text: str, start: int) -> int:
+    """Where the host part that begins at start ends: just past the first / ? or # from there, else the
+    end of text. Keeping that character keeps the parse _host makes of the whole rest of the text."""
+    found = AUTHORITY_END.search(text, start)
+    return found.end() if found else len(text)
+
+
+def _path_and_query(url: str) -> str:
+    """The path and query of a URL, read as http when it has no scheme; all of it when it cannot be parsed."""
+    text = url.strip()
+    if "://" not in text[:16]:
+        text = "http://" + text.lstrip("/")
+    try:
+        parts = urlsplit(text)
+    except ValueError:
+        return text
+    return parts.path + "?" + parts.query
+
+
 def _forms(text: str) -> list:
     """The text as written and percent-decoded (twice, for double encoding)."""
     decoded = unquote(unquote(text))
     return [text] if decoded == text else [text, decoded]
 
 
+def hosts_in_text(text: str):
+    """Every host name in free text, in order, in one pass over the text.
+
+    The text is read as runs of word characters and hyphens ([\\w-]+) and the characters between
+    them. A chain is a sequence of runs joined by single dots in which every run but the last is a
+    label. A chain names one host: from its first run, if that run is a label, to the last run after
+    it that is a top-level label. That is what the regex
+    (?<![\\w-])((?:label\\.)+[a-z]{2,63})(?![\\w-]) finds with findall (tests/test_guard_hook.py keeps it
+    as the reference), without the time that regex takes on long chains: over 40 s on 64 KB.
+    """
+    start = end = None  # where the current chain starts, and where its last top-level label ends
+    previous_end, previous_is_label = -2, False
+    for run in WORD_RUN.finditer(text):
+        word = run.group()
+        if previous_is_label and run.start() == previous_end + 1 and text[previous_end] == ".":
+            if TOP_LABEL.fullmatch(word):
+                end = run.end()
+        else:
+            if end is not None:
+                yield text[start:end]
+            start, end = run.start(), None
+        previous_end = run.end()
+        previous_is_label = word[0] != "-" and word[-1] != "-" and LABEL.fullmatch(word) is not None
+    if end is not None:
+        yield text[start:end]
+
+
 def refused_in_text(text: str) -> str | None:
     """The first Booking or Airbnb host named anywhere in free text.
 
-    Every refused host holds "booking" or "airbnb", so text without either skips the host scan,
-    which is slow on long dotted strings.
+    Every refused host holds "booking" or "airbnb", so text without either skips the host scan.
     """
     for form in _forms(text):
         lowered = form.lower()
         if "booking" not in lowered and "airbnb" not in lowered:
             continue
-        for host in HOST_IN_TEXT.findall(form):
+        for host in hosts_in_text(form):
             if _refused(host.lower()):
                 return host.lower()
     return None
 
 
 def refused_in_url(value: str) -> str | None:
-    """The Booking or Airbnb host a URL field is aimed at, directly or through an embedded URL."""
+    """The Booking or Airbnb host a URL field is aimed at.
+
+    That is the URL's own host, the host of a URL embedded in it with a scheme (a reader proxy), or a
+    host named without a scheme in its path or query (translate?u=www.booking.com/...,
+    cache:www.booking.com/..., web.archive.org/web/2025/www.booking.com/...).
+    """
     for form in _forms(value):
-        hosts = [_host(form)] + [_host(form[m.start():]) for m in SCHEME.finditer(form) if m.start() > 0]
+        # An embedded URL's host ends at the first / ? or # after its scheme, so _host reads only up to
+        # there: parsing the whole rest of the string for each of thousands of embedded URLs is quadratic.
+        hosts = [_host(form)] + [_host(form[m.start():_authority_end(form, m.end())])
+                                 for m in SCHEME.finditer(form) if m.start() > 0]
         for host in hosts:
             if _refused(host):
                 return host
+        host = refused_in_text(_path_and_query(form))
+        if host:
+            return host
     return None
 
 
@@ -192,13 +263,17 @@ def _on(server: str, names) -> bool:
     return server in names or (server.startswith("plugin_") and server.endswith(tuple("_" + n for n in names)))
 
 
+def _skill_dir() -> str:
+    """The folder that holds this bin/ directory."""
+    return os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
+
+
 def open_run(skill_dir: str | None = None) -> str | None:
-    """'trips/<trip>/run (stage X)' for the first run whose stage is not done, else None.
+    """The absolute path of the first run folder whose stage is not done, else None.
 
     skill_dir defaults to the folder that holds this bin/ directory.
     """
-    skill_dir = skill_dir or os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-    trips = os.path.join(skill_dir, "data", "trips")
+    trips = os.path.join(os.path.abspath(skill_dir or _skill_dir()), "data", "trips")
     if not os.path.isdir(trips):
         return None
     for entry in sorted(os.scandir(trips), key=lambda e: e.name):
@@ -206,8 +281,19 @@ def open_run(skill_dir: str | None = None) -> str | None:
         if os.path.isdir(run):
             stage = _stage(os.path.join(run, "state.json"))
             if stage != "done" and not _check_in_passed(os.path.join(run, "trip.json")):
-                return f"trips/{entry.name}/run, stage {stage}"
+                return run
     return None
+
+
+def _run_is_open(run: str) -> str:
+    """The start of a KTD9 block reason: which run is open and at what stage."""
+    return f"a find-hotel run is open ({run}, stage {_stage(os.path.join(run, 'state.json'))})"
+
+
+def _how_to_close(run: str) -> str:
+    """The end of a KTD9 block reason: the command that ends the run, so any session can lift the block."""
+    return (f"If the user has abandoned that search, close the run: "
+            f'python3 "{_skill_dir()}/bin/orchestrate.py" close "{run}" --reason abandoned')
 
 
 def _read_json(path: str):
@@ -243,8 +329,8 @@ def check_browser(tool: str, tool_input: dict) -> str | None:
         return None
     run = open_run()
     if run:
-        return (f"{PREFIX} (KTD9): a find-hotel run is open ({run}); a browser or screen call must name the URL "
-                f"it acts on. Booking engines are read through bin/engine_reader.py.")
+        return (f"{PREFIX} (KTD9): {_run_is_open(run)}; a browser or screen call must name the URL it acts on. "
+                f"Booking engines are read through bin/engine_reader.py. {_how_to_close(run)}")
     return None
 
 
@@ -259,10 +345,8 @@ def check_fetch(tool: str, tool_input: dict) -> str | None:
             return f"{PREFIX} (R21): {tool} carries browser code that opens {host}."
     _, name = split_tool(tool)
     if name.endswith("_search") and tool_input.get("scrapeOptions") is not None:
-        aim = " ".join(_strings([tool_input.get("query"), tool_input.get("includeDomains")]))
-        if targets_booking_or_airbnb(aim):
-            return (f"{PREFIX} (R21): this search also fetches its result pages (scrapeOptions) and targets "
-                    f"Booking or Airbnb. Run it without scrapeOptions.")
+        return (f"{PREFIX} (R21): {tool} with scrapeOptions also fetches every result page, and a hotel's results "
+                f"often include its Booking page. Search without scrapeOptions and read the pages you need one by one.")
     if "agent" in name or "interact" in name:
         task = " ".join(_strings([tool_input.get(key) for key in TASK_KEYS]))
         if targets_booking_or_airbnb(task):
@@ -271,20 +355,35 @@ def check_fetch(tool: str, tool_input: dict) -> str | None:
 
 
 def _command_names(command: str):
-    """The program that starts each simple command, after assignments and wrappers like sudo or env."""
+    """The program that starts each simple command.
+
+    That is the first word after assignments, after wrappers such as sudo, env, timeout or eval with
+    their options and option values, and inside the string that sh -c (bash, zsh...) runs. Quotes
+    and a leading ( { ! are stripped from each word, so eval "curl ..." and bash -c "(curl ...)" read curl.
+    """
     for segment in SHELL_SEGMENTS.split(command):
-        words = segment.strip().lstrip("({!").split()
+        words = iter(segment.split())
         wrapped = False
         for word in words:
-            word = word.strip("'\"")
-            if ASSIGNMENT.match(word) or (wrapped and word.startswith("-")):
+            word = word.lstrip("({!'\"").rstrip("'\"")
+            if not word or ASSIGNMENT.match(word) or (wrapped and (word[0] == "-" or WRAPPER_VALUE.fullmatch(word))):
                 continue
             name = word.rsplit("/", 1)[-1]
-            if name in SHELL_WRAPPERS:
+            if name in SHELL_WRAPPERS or (name in SHELLS and _runs_a_string(words)):
                 wrapped = True
                 continue
             yield name
             break
+
+
+def _runs_a_string(words) -> bool:
+    """True when a shell's options, read from words up to its first other word, include -c."""
+    for word in words:
+        if not word.startswith("-"):
+            return False
+        if SHELL_STRING_OPTION.fullmatch(word):
+            return True
+    return False
 
 
 def check_bash(tool_input: dict) -> str | None:
@@ -302,7 +401,7 @@ def check_gmail(tool: str, name: str) -> str | None:
         return None
     run = open_run()
     if run:
-        return f"{PREFIX} (KTD9): a find-hotel run is open ({run}), so Gmail is read-only; {tool} is not a read tool."
+        return f"{PREFIX} (KTD9): {_run_is_open(run)}, so Gmail is read-only; {tool} is not a read tool. {_how_to_close(run)}"
     return None
 
 
