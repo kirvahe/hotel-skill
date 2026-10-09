@@ -170,7 +170,18 @@ if [ "${UNINSTALL_HOOK}" = true ]; then
   exit 0
 fi
 
-# 0. Check the data location before writing anything
+# 0. Check the skill and data locations before writing anything.
+#    The guard hook command holds the skill's absolute path inside a quoted YAML string
+#    (see wire_guard_hook), so a path that would break that string is refused here.
+case "${TARGET}" in
+  /*) TARGET_PATH="${TARGET}" ;;
+  *)  TARGET_PATH="${PWD}/${TARGET}" ;;
+esac
+if [[ "${TARGET_PATH}" == *[\"\\]* ]]; then
+  die "the skill folder path contains a quote or a backslash: ${TARGET_PATH}
+       The guard hook needs a plain path. Choose another --skill-dir. Nothing was installed."
+fi
+
 if [[ -n "${DATA_DIR}" ]]; then
   [[ -d "${DATA_DIR}" ]] || die "data folder not found: ${DATA_DIR}
        Create it or fix the path. Nothing was installed."
@@ -221,10 +232,26 @@ copy_file() {
     fi
 }
 
+# Hook commands get no ${CLAUDE_SKILL_DIR}, so SKILL.md names the guard hook as
+# __HOTEL_SKILL_DIR__/bin/guard_hook.py and the installed copy gets this install's absolute
+# path (KTD9). The repository's SKILL.md keeps the placeholder.
+wire_guard_hook() {
+    local skill_md="${TARGET}/SKILL.md" abs escaped
+    if [[ ! -f "${skill_md}" ]] || ! grep -q '__HOTEL_SKILL_DIR__' "${skill_md}"; then
+        return 0
+    fi
+    abs="$(cd "${TARGET}" && pwd)"
+    escaped="$(printf '%s' "${abs}" | sed -e 's/[\\&|]/\\&/g')"
+    sed "s|__HOTEL_SKILL_DIR__|${escaped}|g" "${skill_md}" > "${skill_md}.tmp"
+    mv "${skill_md}.tmp" "${skill_md}"
+    echo "==> Guard hook: ${abs}/bin/guard_hook.py"
+}
+
 copy_file "SKILL.md"
 copy_dir "workflows"
 copy_dir "references"
 copy_dir "bin"
+wire_guard_hook
 
 # 3. Personal data — only seed templates into a folder that has no profile yet.
 #    A folder with a profile holds real data, so nothing is added to it.

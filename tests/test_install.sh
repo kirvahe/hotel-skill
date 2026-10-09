@@ -101,6 +101,42 @@ else
   fail "dangling data link message"
 fi
 
+# 7. The installed SKILL.md names the guard hook by the skill's absolute path; the source keeps
+#    the placeholder. Runs a copy of the repo whose SKILL.md carries the placeholder, installed
+#    with a relative --skill-dir whose name holds a space and an ampersand.
+root="$(new_root)"; fixture_data "$root/mydata"
+src="$root/src"; mkdir -p "$src"
+(cd "$REPO" && tar cf - --exclude .git --exclude docs --exclude data .) | (cd "$src" && tar xf -)
+printf '\nGuard: __HOTEL_SKILL_DIR__/bin/guard_hook.py\n' >> "$src/SKILL.md"
+skill="$root/A&B skills/hotel"
+if (cd "$root" && HOME="$root/home" "$src/install.sh" --non-interactive --skill-dir "A&B skills/hotel" \
+      --data-dir "$root/mydata" >"$root/out.log" 2>&1); then
+  abs="$(cd "$skill" && pwd)"
+  hook="$(sed -n 's/^Guard: //p' "$skill/SKILL.md")"
+  booking='{"hook_event_name":"PreToolUse","tool_name":"WebFetch","tool_input":{"url":"https://www.booking.com/x"}}'
+  printf '%s' "$booking" | python3 "$hook" >/dev/null 2>&1; status=$?
+  if [[ "$hook" == "$abs/bin/guard_hook.py" && "$status" -eq 2 ]] \
+     && ! grep -q "__HOTEL_SKILL_DIR__" "$skill/SKILL.md" && grep -q "__HOTEL_SKILL_DIR__" "$src/SKILL.md"; then
+    pass "installed SKILL.md names the guard hook by absolute path and the hook blocks"
+  else
+    fail "installed SKILL.md names the guard hook by absolute path and the hook blocks (hook='$hook', exit $status)"
+  fi
+else
+  fail "guard hook path install (installer exited non-zero)"
+fi
+
+# 8. A skill folder path with a double quote is refused before anything is written
+root="$(new_root)"
+if run_install "$root" --skill-dir "$root/bad\"name/hotel"; then
+  fail "skill folder path with a quote is refused"
+elif [[ -e "$root/bad\"name" ]]; then
+  fail "skill folder path with a quote creates nothing"
+elif grep -q "quote or a backslash" "$root/out.log"; then
+  pass "skill folder path with a quote is refused with a message and creates nothing"
+else
+  fail "skill folder path with a quote message"
+fi
+
 echo
 if [[ "$FAILS" -eq 0 ]]; then echo "all install tests passed"; else echo "$FAILS install test(s) failed"; fi
 exit "$FAILS"
