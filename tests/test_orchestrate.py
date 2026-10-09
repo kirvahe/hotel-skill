@@ -143,6 +143,23 @@ class StartResumeTest(Base):
         self.assertEqual(len(orchestrate.resume(self.data, city="Тестград", today=TODAY)["open_runs"]), 1)
         self.assertEqual(orchestrate.resume(self.data, city="Otherburg", today=TODAY)["open_runs"], [])
 
+    def test_start_and_resume_record_the_sessions_working_on_the_run(self):
+        # The guard's open-run blocks apply only to these sessions (KTD9, the user's decision).
+        self.start(session="0b6c2a1e-5f1d-4e2b-9a7c-1d2e3f4a5b6c")
+        self.assertEqual(read_json(self.run / "state.json")["sessions"], ["0b6c2a1e-5f1d-4e2b-9a7c-1d2e3f4a5b6c"])
+        orchestrate.resume(self.data, city="Testgrad", today=TODAY, session="7e8f9a0b-1c2d-4e3f-8a9b-0c1d2e3f4a5b")
+        orchestrate.resume(self.data, city="Testgrad", today=TODAY, session="7e8f9a0b-1c2d-4e3f-8a9b-0c1d2e3f4a5b")
+        self.assertEqual(read_json(self.run / "state.json")["sessions"],
+                         ["0b6c2a1e-5f1d-4e2b-9a7c-1d2e3f4a5b6c", "7e8f9a0b-1c2d-4e3f-8a9b-0c1d2e3f4a5b"])
+        orchestrate.resume(self.data, city="Otherburg", today=TODAY, session="aaaaaaaa-0000-4000-8000-000000000000")
+        self.assertNotIn("aaaaaaaa-0000-4000-8000-000000000000", read_json(self.run / "state.json")["sessions"])
+
+    def test_a_session_placeholder_that_was_not_filled_in_is_ignored(self):
+        for value in ("${CLAUDE_SESSION_ID}", "", "x; rm -rf /"):
+            with self.subTest(value=value):
+                self.start(session=value, new=True)
+                self.assertEqual(read_json(self.run / "state.json").get("sessions", []), [])
+
     def test_finished_and_past_runs_are_not_open(self):
         self.start()
         ledger.write_state(self.run, stage="done", waiting_for=[])
@@ -790,9 +807,11 @@ class CliTest(Base):
                                   "--budget-max", 180, "--dog", "yes")
         self.assertEqual(code, 0, err)
         self.assertEqual(read_json(Path(out["run_dir"]) / "trip.json")["lang"], "ru")
-        code, out, err = self.cli("resume", "--data", self.data)
+        code, out, err = self.cli("resume", "--data", self.data, "--session", "5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d")
         self.assertEqual(code, 0, err)
         self.assertEqual(out["open_runs"][0]["stage"], "context")
+        self.assertEqual(read_json(Path(out["open_runs"][0]["run_dir"]) / "state.json")["sessions"],
+                         ["5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d"])
 
     def test_a_missing_input_exits_2(self):
         self.start()

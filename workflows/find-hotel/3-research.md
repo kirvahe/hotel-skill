@@ -15,7 +15,7 @@ research progress:
 python3 {skill}/bin/orchestrate.py fanout RUN research
 ```
 
-- Exit 3, `caps_pending`: stop here. Tell the user that the search and fetch caps and the Firecrawl credit floor await their approval (name the `pending` items) and that the run continues from this stage once the numbers are written into `references/briefs/research-contract.md`. Start no agent, and do not research in the main conversation instead. The run stays open, which blocks Gmail tools that change mail; when the user does not want to wait, close it: `orchestrate.py close RUN --reason "caps await approval"`.
+- Exit 3, `caps_pending`: stop here. Tell the user that the search and fetch caps and the Firecrawl credit floor await their approval (name the `pending` items) and that the run continues from this stage once the numbers are written into `references/briefs/research-contract.md`. Start no agent, and do not research in the main conversation instead. The run stays open, which keeps Gmail read-only in this session; when the user does not want to wait, close it: `orchestrate.py close RUN --reason "caps await approval"`.
 - Exit 2: a stage 2 file is missing or invalid; fix it and run again.
 
 **2. Spawn the agents.** One message, three Agent calls: `model: "opus"`, each `prompt` exactly as printed, description `hotel research: {name}`. Tell the user the research is running (it takes several minutes).

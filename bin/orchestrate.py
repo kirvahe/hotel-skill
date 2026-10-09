@@ -106,8 +106,9 @@ def _english(why: list) -> str:
 
 # ---------------------------------------------------------------- start and resume
 
-def resume(data: Path, city: str | None = None, today: date | None = None) -> dict:
-    """Runs not finished: open ones (trip still ahead) and stale ones (check-in already past)."""
+def resume(data: Path, city: str | None = None, today: date | None = None, session: str | None = None) -> dict:
+    """Runs not finished: open ones (trip still ahead) and stale ones (check-in already past).
+    With a session id, the open runs listed are recorded as worked on in that session (KTD9)."""
     today_text, slug = _iso(today), ledger.city_slug(city) if city else None
     open_runs, stale = [], []
     for state_path in sorted(Path(data).glob("trips/*/run/state.json")):
@@ -124,6 +125,8 @@ def resume(data: Path, city: str | None = None, today: date | None = None) -> di
                 "waiting_for": state.get("waiting_for", []), "updated": state.get("updated", ""),
                 "lang": trip.get("lang", "en")}
         (stale if trip["check_in"] < today_text else open_runs).append(info)
+    for info in open_runs:
+        ledger.add_session(Path(info["run_dir"]), session)
     open_runs.sort(key=lambda r: r["updated"], reverse=True)
     return {"open_runs": open_runs, "stale": stale}
 
@@ -159,7 +162,7 @@ def cache_run_id(run: Path) -> str:
 
 def start(data: Path, *, city: str, country: str, languages: str, lang: str, check_in: str, check_out: str,
           guests: int, budget_max: float, dog: bool, budget_min: float = 0, occasion: str = "",
-          new: bool = False, today: date | None = None) -> dict:
+          new: bool = False, today: date | None = None, session: str | None = None) -> dict:
     """Open the run folder for a trip. An unfinished run for the same city and month is never overwritten.
     The trip is checked before anything is archived or created, so a rejected start changes nothing."""
     data = Path(data)
@@ -188,6 +191,7 @@ def start(data: Path, *, city: str, country: str, languages: str, lang: str, che
                 run_id=runfiles.trip_dir(run).name + (f"#{runs_before + 1}" if runs_before else ""))
     runfiles.write_json(run / runfiles.TRIP, trip)
     _set_stage(run, "context")
+    ledger.add_session(run, session)
     return {"run_dir": str(run), "archived": archived, "stage": "context", "stage_file": _stage_file("context")}
 
 
@@ -874,6 +878,7 @@ def main(argv: list) -> int:
     p = sub.add_parser("resume")
     p.add_argument("--data", required=True)
     p.add_argument("--city")
+    p.add_argument("--session", help="this Claude Code session's id (${CLAUDE_SESSION_ID})")
     p = sub.add_parser("start")
     for name in ("--data", "--city", "--country", "--languages", "--lang", "--check-in", "--check-out"):
         p.add_argument(name, required=True)
@@ -883,6 +888,7 @@ def main(argv: list) -> int:
     p.add_argument("--dog", choices=("yes", "no"), required=True)
     p.add_argument("--occasion", default="")
     p.add_argument("--new", action="store_true")
+    p.add_argument("--session", help="this Claude Code session's id (${CLAUDE_SESSION_ID})")
     for name in ("context", "filter", "resolved", "finalized"):
         sub.add_parser(name).add_argument("run")
     p = sub.add_parser("fanout")
@@ -928,12 +934,12 @@ def main(argv: list) -> int:
         if args.cmd == "caps":
             out = caps(Path(args.contract).expanduser())
         elif args.cmd == "resume":
-            out = resume(Path(args.data).expanduser(), args.city)
+            out = resume(Path(args.data).expanduser(), args.city, session=args.session)
         elif args.cmd == "start":
             out = start(Path(args.data).expanduser(), city=args.city, country=args.country, languages=args.languages,
                         lang=args.lang, check_in=args.check_in, check_out=args.check_out, guests=args.guests,
                         budget_max=args.budget_max, budget_min=args.budget_min, dog=args.dog == "yes",
-                        occasion=args.occasion, new=args.new)
+                        occasion=args.occasion, new=args.new, session=args.session)
         elif args.cmd == "context":
             out = context(run)
         elif args.cmd == "fanout":

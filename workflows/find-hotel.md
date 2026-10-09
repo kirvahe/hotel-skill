@@ -35,7 +35,7 @@ Every step runs `python3 {skill}/bin/orchestrate.py COMMAND RUN …`, which prin
 - Exit 2: an input is missing or invalid. The message names it: fix that input and run the command again.
 - Exit 3: stop and tell the user the `message` (caps awaiting approval, or an unfinished run in the way). Do not work around it.
 
-`python3 {skill}/bin/orchestrate.py --help` lists the commands. The stage files give each one where it is used. A run the user abandons ends with `orchestrate.py close RUN --reason "…"`: until a run is answered or closed it counts as open, and an open run blocks Gmail tools that change mail.
+`python3 {skill}/bin/orchestrate.py --help` lists the commands. The stage files give each one where it is used. A run the user abandons ends with `orchestrate.py close RUN --reason "…"`: until a run is answered or closed it counts as open, and in the sessions working on it the guard keeps Gmail read-only and blocks screen tools that name no URL.
 
 ## Agents
 

@@ -22,17 +22,16 @@ Always blocked:
   - Bash commands that name a Booking or Airbnb host and fetch something (curl, wget, open,
     urllib.request, requests, fetch(...), a headless browser), also behind wrappers (timeout,
     nice -n 5, env, sudo), eval and sh -c "...".
-Blocked only while a find-hotel run is open:
+Blocked only in a session where a find-hotel run is open (KTD9):
   - Gmail tools (any MCP server with "gmail" in its name) outside the read-only list;
   - browser and screen calls that name no URL (a tab read, a click, a screenshot).
 
-A run is open when any data/trips/*/run folder (bin/ledger.py) has a stage other than "done" and
-its check-in date (trip.json) has not passed. A run folder without state.json is at "intake" (as
-ledger.read_state reads it); a state file that cannot be parsed, or a trip.json without a
-readable check-in, counts as open. There is no age limit: an unfinished run stays open until its
-check-in date or until the skill closes it, because the skill resumes open runs. The guard runs in
-every session, so these block reasons name the run's absolute path and the orchestrate.py close
-command that ends it.
+A run is open in a session when a data/trips/*/run folder (bin/ledger.py) has a stage other than
+"done", its check-in date (trip.json) has not passed, and its state.json lists that session id
+under "sessions" (orchestrate.py start and resume record ${CLAUDE_SESSION_ID}). Subagents carry
+their session's id. Every other session is unaffected, as the user decided; a state file that
+cannot be read names no session. A trip.json without a readable check-in counts as ahead. The
+block reasons name the run's absolute path and the orchestrate.py close command that ends it.
 
 Host rule: booking.com and its subdomains, and any host with an "airbnb" label (refused_host,
 which bin/engine_reader.py imports from here).
@@ -105,8 +104,15 @@ PREFIX = "Blocked by the /hotel guard"
 
 
 def refused_host(url: str) -> str | None:
-    """The host when the URL is a Booking or Airbnb page (R21), else None."""
-    host = (urlsplit(url).hostname or "").rstrip(".")
+    """The host when the URL is a Booking or Airbnb page (R21), else None.
+
+    A URL that urlsplit rejects (an unbalanced bracket, say) is judged by the hosts its text
+    names, so a malformed Booking URL is still refused rather than let through.
+    """
+    try:
+        host = (urlsplit(url).hostname or "").rstrip(".")
+    except ValueError:
+        return refused_in_text(url)
     if host == "booking.com" or host.endswith(".booking.com") or "airbnb" in host.split("."):
         return host
     return None
@@ -268,19 +274,26 @@ def _skill_dir() -> str:
     return os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
 
 
-def open_run(skill_dir: str | None = None) -> str | None:
-    """The absolute path of the first run folder whose stage is not done, else None.
+def open_run(skill_dir: str | None = None, session_id: str | None = None) -> str | None:
+    """The absolute path of the first run open in this session, else None (KTD9).
 
-    skill_dir defaults to the folder that holds this bin/ directory.
+    A run is open in a session when its stage is not done, its check-in date has not passed and
+    its state.json lists the session among "sessions" (orchestrate.py start and resume record the
+    sessions that work on it). Subagents carry their session's id, so they count as that session.
+    Other sessions are not affected: the user decided the open-run blocks belong to the search's
+    own session. skill_dir defaults to the folder that holds this bin/ directory.
     """
+    if not session_id:
+        return None
     trips = os.path.join(os.path.abspath(skill_dir or _skill_dir()), "data", "trips")
     if not os.path.isdir(trips):
         return None
     for entry in sorted(os.scandir(trips), key=lambda e: e.name):
         run = os.path.join(entry.path, "run")
         if os.path.isdir(run):
-            stage = _stage(os.path.join(run, "state.json"))
-            if stage != "done" and not _check_in_passed(os.path.join(run, "trip.json")):
+            state = _state(os.path.join(run, "state.json"))
+            if (state.get("stage") != "done" and session_id in (state.get("sessions") or [])
+                    and not _check_in_passed(os.path.join(run, "trip.json"))):
                 return run
     return None
 
@@ -309,6 +322,15 @@ def _check_in_passed(path: str) -> bool:
         return False
 
 
+def _state(path: str) -> dict:
+    """The run's state.json, or {} when it is missing or unreadable (such a run names no session)."""
+    try:
+        state = _read_json(path)
+    except (OSError, ValueError):
+        return {}
+    return state if isinstance(state, dict) else {}
+
+
 def _stage(path: str) -> str:
     try:
         stage = _read_json(path).get("stage")
@@ -319,7 +341,7 @@ def _stage(path: str) -> str:
     return stage if isinstance(stage, str) and stage else "unreadable"
 
 
-def check_browser(tool: str, tool_input: dict) -> str | None:
+def check_browser(tool: str, tool_input: dict, session_id: str | None = None) -> str | None:
     for text in _strings(tool_input):
         host = refused_in_text(text)
         if host:
@@ -327,7 +349,7 @@ def check_browser(tool: str, tool_input: dict) -> str | None:
     hosts = [_host(value) for value in _keyed_strings(tool_input, _is_url_key)]
     if any("." in host or host == "localhost" for host in hosts):
         return None
-    run = open_run()
+    run = open_run(session_id=session_id)
     if run:
         return (f"{PREFIX} (KTD9): {_run_is_open(run)}; a browser or screen call must name the URL it acts on. "
                 f"Booking engines are read through bin/engine_reader.py. {_how_to_close(run)}")
@@ -396,10 +418,10 @@ def check_bash(tool_input: dict) -> str | None:
     return None
 
 
-def check_gmail(tool: str, name: str) -> str | None:
+def check_gmail(tool: str, name: str, session_id: str | None = None) -> str | None:
     if name in GMAIL_READS:
         return None
-    run = open_run()
+    run = open_run(session_id=session_id)
     if run:
         return f"{PREFIX} (KTD9): {_run_is_open(run)}, so Gmail is read-only; {tool} is not a read tool. {_how_to_close(run)}"
     return None
@@ -412,6 +434,7 @@ def decide(event: dict) -> str | None:
     tool, tool_input = event.get("tool_name"), event.get("tool_input")
     if not isinstance(tool, str) or not isinstance(tool_input, dict):
         return None
+    session = event.get("session_id") if isinstance(event.get("session_id"), str) else None
     if tool == "Bash":
         return check_bash(tool_input)
     if tool == "WebFetch":
@@ -420,11 +443,11 @@ def decide(event: dict) -> str | None:
     if not server:
         return None
     if _on(server, BROWSER_SERVERS):
-        return check_browser(tool, tool_input)
+        return check_browser(tool, tool_input, session)
     if _on(server, FETCH_SERVERS):
         return check_fetch(tool, tool_input)
     if "gmail" in server.lower():  # any Gmail server, whatever the user named it
-        return check_gmail(tool, name)
+        return check_gmail(tool, name, session)
     return None
 
 

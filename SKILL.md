@@ -14,7 +14,7 @@ hooks:
 
 ## Before anything else
 
-`{skill}` in every workflow and reference file means this skill's folder: `${CLAUDE_SKILL_DIR}`. User data lives in `{skill}/data/`; scripts live in `{skill}/bin/`.
+`{skill}` in every workflow and reference file means this skill's folder: `${CLAUDE_SKILL_DIR}`. User data lives in `{skill}/data/`; scripts live in `{skill}/bin/`. `{session}` means this session's id: `${CLAUDE_SESSION_ID}`.
 
 Run `python3 ${CLAUDE_SKILL_DIR}/bin/preflight.py` first. If it prints `"status": "stop"`, show the user its `message` and stop. Otherwise continue.
 
@@ -23,13 +23,13 @@ Run `python3 ${CLAUDE_SKILL_DIR}/bin/preflight.py` first. If it prints `"status"
 A find-hotel run keeps its state on disk, in a run folder (`RUN`). Before starting one, and whenever the conversation lost track of a run (after a compaction, in a new session), run:
 
 ```bash
-python3 ${CLAUDE_SKILL_DIR}/bin/orchestrate.py resume --data ${CLAUDE_SKILL_DIR}/data --city "{city}"
+python3 ${CLAUDE_SKILL_DIR}/bin/orchestrate.py resume --data ${CLAUDE_SKILL_DIR}/data --city "{city}" --session ${CLAUDE_SESSION_ID}
 ```
 
 - It lists an open run for this trip: continue it. Read `workflows/find-hotel.md`, then the `stage_file` it names, and do that stage on its `run_dir`. `waiting_for` lists agents that were still running.
 - It lists an open run for the same city with other dates: ask the user whether to continue it or start a new run.
 - It lists none: start at stage 1.
-- `stale` lists runs whose check-in date has passed: tell the user and close each one with `python3 ${CLAUDE_SKILL_DIR}/bin/orchestrate.py close {run_dir} --reason "dates passed"`. A run that is not closed counts as open, and an open run blocks every Gmail tool that changes mail.
+- `stale` lists runs whose check-in date has passed: tell the user and close each one with `python3 ${CLAUDE_SKILL_DIR}/bin/orchestrate.py close {run_dir} --reason "dates passed"`. While a run is open, the guard hook keeps Gmail read-only and blocks screen tools that name no URL, in this session and its subagents only (`--session` records the session on the run).
 
 ## Find a hotel: stages
 

@@ -317,6 +317,25 @@ def write_state(run_dir: Path, *, stage: str, waiting_for: list) -> dict:
     return state
 
 
+SESSION_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9-]{7,63}")
+
+
+def add_session(run_dir: Path, session: str | None) -> bool:
+    """Record a Claude Code session id as working on this run (KTD9: the guard's open-run blocks
+    apply only to these sessions). A value that is not an id, such as an unsubstituted
+    ${CLAUDE_SESSION_ID} placeholder or an empty string, is ignored. True when the id was added."""
+    if not (isinstance(session, str) and SESSION_ID.fullmatch(session)):
+        return False
+    path = Path(run_dir) / "state.json"
+    state = read_state(run_dir)
+    sessions = state.setdefault("sessions", [])
+    if session in sessions:
+        return False
+    sessions.append(session)
+    path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+    return True
+
+
 def read_records(path: Path, kind: str, label: str | None = None) -> tuple[list, list]:
     """(valid records, rejected lines) of a .jsonl file, checked against the ledger kind.
 

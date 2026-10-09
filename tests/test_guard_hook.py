@@ -49,10 +49,13 @@ class GuardTest(unittest.TestCase):
         (self.data / "trips").mkdir(parents=True)
         (self.skill / "data").symlink_to(self.data)
 
-    def open_run(self, stage="shortlist", trip="ciudad-inventada-2026-11"):
+    def open_run(self, stage="shortlist", trip="ciudad-inventada-2026-11", sessions=("test-session",)):
+        """A run folder; sessions are the Claude Code sessions working on it (the hook payload's is test-session)."""
         run = self.data / "trips" / trip / "run"
         run.mkdir(parents=True, exist_ok=True)
         state = {"stage": stage, "waiting_for": [], "updated": "2026-10-09T10:00:00+00:00"}
+        if sessions is not None:
+            state["sessions"] = list(sessions)
         (run / "state.json").write_text(json.dumps(state), encoding="utf-8")
         return run
 
@@ -332,6 +335,13 @@ class FetchTest(GuardTest):
         self.assertAllowed(self.hook("mcp__firecrawl__firecrawl_agent", {"prompt": "Opening year of Hotel Inventado"}))
 
 
+class MalformedUrlTest(GuardTest):
+    def test_a_booking_url_that_url_parsing_rejects_is_still_blocked(self):
+        for url in ("https://a[b@www.booking.com]/x", "https://[www.booking.com/x", "http://www.airbnb.es]:x/rooms/1"):
+            with self.subTest(url=url):
+                self.assertBlocked(self.hook("WebFetch", {"url": url, "prompt": "p"}), rule="R21")
+
+
 class SearchTest(GuardTest):
     def test_plain_search_passes_including_site_booking(self):
         self.open_run()
@@ -470,10 +480,33 @@ class GmailTest(GuardTest):
         self.open_run(stage="research", trip="ciudad-inventada-2026-11")
         self.assertBlocked(self.hook("mcp__gmail-work__modify_messages", {"ids": ["1"]}), rule="KTD9")
 
-    def test_unreadable_state_counts_as_open(self):
+    def test_unreadable_state_blocks_no_session(self):
+        # The open-run blocks belong to the sessions a run names; a state file that cannot be read names none.
         run = self.open_run()
         (run / "state.json").write_text("{not json", encoding="utf-8")
-        self.assertBlocked(self.hook("mcp__claude_ai_Gmail__reply", {"body": "x"}), rule="KTD9")
+        self.assertAllowed(self.hook("mcp__claude_ai_Gmail__reply", {"body": "x"}))
+
+    def test_an_open_run_blocks_only_the_sessions_working_on_it(self):
+        self.open_run(sessions=["search-session"])
+        self.assertAllowed(self.hook("mcp__claude_ai_Gmail__send_message", {"to": "x@example.com"}))
+        self.assertAllowed(self.hook("mcp__computer-use__screenshot", {}))
+        for extra in ({}, SUBAGENT):  # the search session itself and its subagents
+            with self.subTest(subagent=bool(extra)):
+                self.assertBlocked(self.hook("mcp__claude_ai_Gmail__send_message", {"to": "x@example.com"},
+                                             session_id="search-session", **extra), rule="KTD9")
+                self.assertBlocked(self.hook("mcp__computer-use__screenshot", {}, session_id="search-session",
+                                             **extra), rule="KTD9")
+
+    def test_a_run_without_sessions_or_an_event_without_one_blocks_nothing(self):
+        self.open_run(sessions=None)
+        self.assertAllowed(self.hook("mcp__claude_ai_Gmail__send_message", {"to": "x@example.com"}))
+        self.open_run(trip="pueblo-ficticio-2099-01")
+        self.assertAllowed(self.hook("mcp__claude_ai_Gmail__send_message", {"to": "x@example.com"}, session_id=None))
+
+    def test_booking_is_blocked_in_every_session(self):
+        self.open_run(sessions=["search-session"])
+        self.assertBlocked(self.hook("WebFetch", {"url": "https://www.booking.com/hotel/es/x.html", "prompt": "p"},
+                                     session_id="unrelated-session"), rule="R21")
 
     def test_a_run_whose_check_in_has_passed_is_not_open(self):
         run = self.open_run()
@@ -505,6 +538,20 @@ class GmailTest(GuardTest):
         self.assertEqual(closed.returncode, 0, closed.stderr)
         self.assertAllowed(self.hook("mcp__claude_ai_Gmail__send_message", {"to": "x@example.com"}))
         self.assertAllowed(self.hook("mcp__computer-use__screenshot", {}))
+
+    def test_a_run_started_with_a_session_blocks_that_session_only(self):
+        shutil.copytree(BIN, self.skill / "bin", dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__"))
+        started = subprocess.run(
+            [sys.executable, str(self.skill / "bin" / "orchestrate.py"), "start", "--data", str(self.skill / "data"),
+             "--city", "Ciudad Inventada", "--country", "Inventia", "--languages", "A = Spanish, B = English, C = none",
+             "--lang", "en", "--check-in", "2099-11-20", "--check-out", "2099-11-22", "--guests", "2",
+             "--budget-max", "200", "--dog", "no", "--session", "search-session-0001"],
+            capture_output=True, text=True)
+        self.assertEqual(started.returncode, 0, started.stderr)
+        send = ("mcp__claude_ai_Gmail__send_message", {"to": "x@example.com"})
+        self.assertBlocked(self.hook(*send, session_id="search-session-0001"), rule="KTD9")
+        self.assertBlocked(self.hook(*send, session_id="search-session-0001", **SUBAGENT), rule="KTD9")
+        self.assertAllowed(self.hook(*send, session_id="another-session-0002"))
 
     def test_missing_data_folder_means_no_run(self):
         (self.skill / "data").unlink()

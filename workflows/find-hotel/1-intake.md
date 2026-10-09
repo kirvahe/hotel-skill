@@ -32,7 +32,7 @@ When the dates are known, ask with AskUserQuestion: one question for the budget 
 ```bash
 python3 {skill}/bin/orchestrate.py start --data {skill}/data --city "{city}" --country "{country}" \
   --languages "{A = …, B = English, C = …}" --lang {code} --check-in {YYYY-MM-DD} --check-out {YYYY-MM-DD} \
-  --guests {n} --budget-max {eur} --dog yes|no --occasion {tag}
+  --guests {n} --budget-max {eur} --dog yes|no --occasion {tag} --session {session}
 ```
 
 - It prints `run_dir`: that is `RUN` from here on.

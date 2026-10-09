@@ -90,7 +90,7 @@ Onboarding is currently manual via the template; a guided flow is on the v1.3 ro
 
 ## Guard hook
 
-The skill never reads Booking or Airbnb pages, in any browser or fetch tool; it gives you dated links instead. `bin/guard_hook.py` enforces that as a Claude Code PreToolUse hook. It also keeps Gmail read-only and blocks screen-reading browser calls while a hotel search is open.
+The skill never reads Booking or Airbnb pages, in any browser or fetch tool; it gives you dated links instead. `bin/guard_hook.py` enforces that as a Claude Code PreToolUse hook. It also keeps Gmail read-only and blocks screen-reading browser calls while a hotel search is open, in that search's own session only: other Claude Code sessions are not affected.
 
 The hook is registered twice:
 
