@@ -114,7 +114,7 @@ Aim for 5-8 bullets. Be specific — mention what you actually notice on arrival
 ## Problematic cities
 
 <!-- Cities where you've struck out — needs targeted research next time.
-e.g. Rome — 3 bookings, all 1-4 — never found "your" hotel here. -->
+e.g. a city with 3 bookings, all rated 1-4 — never found "your" hotel there. -->
 
 ---
 
